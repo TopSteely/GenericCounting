@@ -35,7 +35,7 @@ all_objects = ones(9963, 600) * -1;
 max_objects = 0;
 max_objects_i = 0;
 tic
-for i = 2:50
+for i = 1:50
     if exist(sprintf(images, num2str(i,'%06d' )), 'file')
         im = imread(sprintf(images, num2str(i,'%06d' )));
     else
@@ -57,10 +57,10 @@ for i = 2:50
             % only taking objects with same class into account?
             g = objects(obj).bbox; %bounding box of object
             ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
-            proposal = [boxes(b, 2) boxes(b, 1) boxes(b, 4)-boxes(b, 2) boxes(b, 3)-boxes(b, 1)];
+            proposal = [boxes(b, 1) boxes(b, 2) boxes(b, 3)-boxes(b, 1) boxes(b, 4)-boxes(b, 2)];
             [int, p_overlap] = overlap(ground_truth, proposal, 'partial');
+            p_overlap
             if p_overlap > 1
-                'whaaaaat????'
                 figure;
                 imshow(im)
                 hold on
@@ -79,6 +79,13 @@ for i = 2:50
             else
                 all_objects(i, b) = all_objects(i, b) + p_overlap;
             end
+            figure;
+            imshow(im)
+            hold on
+            rectangle('Position', ground_truth, 'edgecolor', 'r', 'Linewidth', 3)
+            rectangle('Position', proposal, 'edgecolor', 'g', 'Linewidth', 3)
+            rectangle('Position', int, 'edgecolor', 'b', 'Linewidth', 1.5)
+            hold off
         end
 %         if overlaps(i, b, cl) > 1 || all_objects(i, b) > 5
 %             figure;

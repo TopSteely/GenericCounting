@@ -30,12 +30,12 @@ sigma = 0.8;
 VOCinit;
 VOCopts.annopath = '/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/Annotations/%s.xml';
 images = '/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/%s.jpg';
-overlaps = ones(9963, 600, 20) * -1;
-all_objects = ones(9963, 600) * -1;
+overlaps = ones(9963, 1000, 20) * -1;
+all_objects = ones(9963, 1000) * -1;
 max_objects = 0;
 max_objects_i = 0;
 tic
-for i = 2:50
+for i = 1:9963
     if exist(sprintf(images, num2str(i,'%06d' )), 'file')
         im = imread(sprintf(images, num2str(i,'%06d' )));
     else
@@ -60,6 +60,7 @@ for i = 2:50
             proposal = [boxes(b, 2) boxes(b, 1) boxes(b, 4)-boxes(b, 2) boxes(b, 3)-boxes(b, 1)];
             [int, p_overlap] = overlap(ground_truth, proposal, 'partial');
             if p_overlap > 1
+                p_overlap
                 'whaaaaat????'
                 figure;
                 imshow(im)
@@ -92,7 +93,7 @@ for i = 2:50
     end
 end
 toc
-save statistics.mat overlaps
+save statistics.mat overlaps all_objects
 
 %% plot statistics
 %resh = reshape(overlaps, 20, 645, 9963);

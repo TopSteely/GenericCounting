@@ -8,6 +8,12 @@ function [intersection, p] = overlap(A, B, string)
     surface_ground_truth = A(3)  * A(4);
     % round to 0.1 decimal
     p = round(surface_intersection / surface_ground_truth* 10)/10;
+    if any(intersection<0)
+        p = 0;
+    end
+    if p > 1
+        'bla'
+    end
     switch string
         case 'partial'
             p = p;

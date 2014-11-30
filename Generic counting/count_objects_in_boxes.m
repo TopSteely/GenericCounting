@@ -59,17 +59,17 @@ for i = 1:9963
             ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
             proposal = [boxes(b, 2) boxes(b, 1) boxes(b, 4)-boxes(b, 2) boxes(b, 3)-boxes(b, 1)];
             [int, p_overlap] = overlap(ground_truth, proposal, 'partial');
-            if p_overlap > 1
-                p_overlap
-                'whaaaaat????'
-                figure;
-                imshow(im)
-                hold on
-                rectangle('Position', ground_truth, 'edgecolor', 'r', 'Linewidth', 3)
-                rectangle('Position', proposal, 'edgecolor', 'g', 'Linewidth', 3)
-                rectangle('Position', int, 'edgecolor', 'b', 'Linewidth', 1.5)
-                hold off
-            end
+%             if p_overlap > 1
+%                 p_overlap
+%                 'whaaaaat????'
+%                 figure;
+%                 imshow(im)
+%                 hold on
+%                 rectangle('Position', ground_truth, 'edgecolor', 'r', 'Linewidth', 3)
+%                 rectangle('Position', proposal, 'edgecolor', 'g', 'Linewidth', 3)
+%                 rectangle('Position', int, 'edgecolor', 'b', 'Linewidth', 1.5)
+%                 hold off
+%             end
             if overlaps(i, b, cl) == -1
                 overlaps(i, b, cl) = p_overlap;
             else
@@ -96,5 +96,5 @@ toc
 save statistics.mat overlaps all_objects
 
 %% plot statistics
-%resh = reshape(overlaps, 20, 645, 9963);
+resh = reshape(overlaps, 20, 1000, 9963);
 [persons, birds, cats, cows, dogs, horses, sheep, aeroplanes, bicycles, boats, buses, cars, motorbikes, trains, bottles, chairs, diningtables, pottedplants, sofas, tvmonitors] = rearr(overlaps);

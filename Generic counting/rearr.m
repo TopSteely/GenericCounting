@@ -1,4 +1,4 @@
-function [persons, birds, cats, cows, dogs, horses, sheeps, aeroplanes, bicycles, boats, buses, cars, motorbikes, trains, bottles, chairs, diningtables, pottedplants, sofas, tvmonitors] = rearr(overlaps)
+function [persons, birds, cats, cows, dogs, horses, sheeps, aeroplanes, bicycles, boats, buses, cars, motorbikes, trains, bottles, chairs, diningtables, pottedplants, sofas, tvmonitors] = rearr(overlaps)   
     % create array per class
     persons = overlaps(:,:,1);
     birds = overlaps(:,:,2);
@@ -63,84 +63,83 @@ function [persons, birds, cats, cows, dogs, horses, sheeps, aeroplanes, bicycles
     tvmonitors( :, all(tvmonitors==-1,1) ) = [];
     
     [uniques,numUnique] = count_unique(persons);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - persons')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('persons.csv', list);
     [uniques,numUnique] = count_unique(birds);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - birds')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('birds.csv', list);
     [uniques,numUnique] = count_unique(cats);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - cats')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('cats.csv', list);
     [uniques,numUnique] = count_unique(cows);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - cows')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('cows.csv', list);
     [uniques,numUnique] = count_unique(dogs);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - dogs')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('dogs.csv', list);
     [uniques,numUnique] = count_unique(horses);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - horses')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('horses.csv', list);
     [uniques,numUnique] = count_unique(sheeps);
-    figure
-    nbins = size(uniques)-1;
-    hist(log(numUnique(2:end)), nbins)
-    title('Histogram of objects per window - sheep')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('sheep.csv', list);
     [uniques,numUnique] = count_unique(aeroplanes);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - aeroplanes')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('aeros.csv', list);
     [uniques,numUnique] = count_unique(bicycles);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - bicycles')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('bicycles.csv', list);
     [uniques,numUnique] = count_unique(boats);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - boats')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('boats.csv', list);
     [uniques,numUnique] = count_unique(buses);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - buses')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('buses.csv', list);
     [uniques,numUnique] = count_unique(cars);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - cars')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('cars.csv', list);
     [uniques,numUnique] = count_unique(motorbikes);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - motorbikes')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('motorbikes.csv', list);
     [uniques,numUnique] = count_unique(trains);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - trains')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('trains.csv', list);
     [uniques,numUnique] = count_unique(bottles);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - bottles')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('bottles.csv', list);
     [uniques,numUnique] = count_unique(chairs);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - chairs')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('charis.csv', list);
     [uniques,numUnique] = count_unique(diningtables);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - diningtables')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('diningtables.csv', list);
     [uniques,numUnique] = count_unique(pottedplants);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - pottedplants')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('plants.csv', list);
     [uniques,numUnique] = count_unique(sofas);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - sofas')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('sofas.csv', list);
     [uniques,numUnique] = count_unique(tvmonitors);
-    figure
-    hist(log(numUnique(2:end)))
-    title('Histogram of objects per window - tvmonitors')
+    list = [uniques(2:end) numUnique(2:end)];
+    list = erase_duplicates(list);
+    csvwrite('tvs.csv', list);
 end

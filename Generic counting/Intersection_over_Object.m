@@ -31,7 +31,6 @@ VOCinit;
 VOCopts.annopath = '/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/Annotations/%s.xml';
 images = '/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/%s.jpg';
 tic
-index = 1;
 for i = 1:9963
     if exist(sprintf(images, num2str(i,'%06d' )), 'file')
         im = imread(sprintf(images, num2str(i,'%06d' )));
@@ -50,15 +49,14 @@ for i = 1:9963
             % only taking objects with same class into account?
             g = objects(obj).bbox; %bounding box of object
             ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
-            proposal = [boxes(b, 2) boxes(b, 1) boxes(b, 4)-boxes(b, 2) boxes(b, 3)-boxes(b, 1)];
-            [int, p_overlap] = overlap(ground_truth, proposal, 'rounded');
+            proposal = [boxes(b, 2) boxes(b, 1) boxes(b, 3)-boxes(b, 1) boxes(b, 4)-boxes(b, 2)];
+            [int, p_overlap] = overlap(im, ground_truth, proposal, 'rounded');
             if p_overlap > 1
                 'whaaaat'
             end
-            ioo(index) = p_overlap;
-            index = index + 1;
+            counts_per_object(i, obj, b) = p_overlap;
         end
     end
 end
 toc
-save ioo.mat ioo
+save counts_per_object.mat counts_per_object

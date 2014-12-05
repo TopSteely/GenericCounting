@@ -7,7 +7,7 @@ function [intersection, p] = overlap(im, A, B, string)
     surface_intersection = intersection(3) * intersection(4);
     surface_ground_truth = A(3)  * A(4);
     % round to 0.1 decimal
-    p = round(surface_intersection / surface_ground_truth* 10)/10;
+    p = surface_intersection / surface_ground_truth;
     switch string
         case 'complete'
             if p > 0
@@ -17,11 +17,13 @@ function [intersection, p] = overlap(im, A, B, string)
             if p > 0.5
                 p = 1;
             end
+        case 'rounded'
+            p = round(surface_intersection / surface_ground_truth* 10)/10;
     end
     if any(intersection<0)
-        imshow(im)
-        rectangle('Position', A, 'edgecolor', 'r', 'Linewidth', 3)
-        rectangle('Position', B, 'edgecolor', 'g', 'Linewidth', 3)
+        %imshow(im)
+        %rectangle('Position', A, 'edgecolor', 'r', 'Linewidth', 3)
+        %rectangle('Position', B, 'edgecolor', 'g', 'Linewidth', 3)
         %rectangle('Position', int, 'edgecolor', 'b', 'Linewidth', 1.5)            
         p = 0;
     end

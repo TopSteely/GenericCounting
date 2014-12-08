@@ -47,31 +47,35 @@ for i = 1:9963
     % get ground truth bounding boxes from annotations
     rec = PASreadrecord(sprintf(VOCopts.annopath,num2str(i,'%06d' )));
     objects = rec.objects;
-    clear gb;
-    for obj = 1:size(objects, 2)
-%            cl = get_class_index(objects(obj).class);
-        % only taking objects with same class into account?
-        g = objects(obj).bbox; %bounding box of object
-        ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
-        if exist('gb')
-            gb = [gb;g];
-        else
-            gb = g;
-        end
-    end
-    csvwrite(sprintf(gts, num2str(i,'%06d' )), gb)
+%     size(im)
+%     boxes(1, :)
+%     imshow(im)
+%     rectangle('Position', [boxes(1, 2) boxes(1, 1) boxes(1, 4)-boxes(1, 2) boxes(1, 3)-boxes(1, 1)], 'edgecolor', 'g')
+%     clear gb;
+%     for obj = 1:size(objects, 2)
+% %            cl = get_class_index(objects(obj).class);
+%         % only taking objects with same class into account?
+%         g = objects(obj).bbox; %bounding box of object
+%         ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
+%         if exist('gb')
+%             gb = [gb;g];
+%         else
+%             gb = g;
+%         end
+%     end
+%     csvwrite(sprintf(gts, num2str(i,'%06d' )), gb)
     tries = 1;
     clear pb
     for negs = 1:size(objects, 2)
         while neg == 0 && tries < 6
             o = 0;
-            idx = randperm(length(boxes));
+            idx = randperm(size(boxes, 1));
             xperm = boxes(idx(1), :);
-            proposal = [xperm(2) xperm(1) xperm(3)-xperm(1) xperm(4)-xperm(2)];
+            proposal = [xperm(2) xperm(1) xperm(4)-xperm(2) xperm(3)-xperm(1)];
             for obj = 1:size(objects, 2)
                 g = objects(obj).bbox; %bounding box of object
                 ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
-                [int, p_overlap] = overlap(im, ground_truth, proposal, 'none');
+                [int, p_overlap] = overlap(ground_truth, proposal, 'none');
                 if p_overlap > 0
                     o = 1;
                     continue;
@@ -80,9 +84,9 @@ for i = 1:9963
             if o == 0
                 neg = 1;
                 if exist('pb')
-                    pb = [pb;proposal];
+                    pb = [pb;[proposal(2) proposal(1) proposal(4)+proposal(2) proposal(3)+proposal(1)]];
                 else
-                    pb = proposal;
+                    pb = [proposal(2) proposal(1) proposal(4)+proposal(2) proposal(3)+proposal(1)];
                 end
             end
             tries = tries + 1;

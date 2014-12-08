@@ -1,4 +1,4 @@
-function [intersection, p] = overlap(im, A, B, string)
+function [intersection, p] = overlap(A, B, string)
     left = max(A(1), B(1));
     right = min(A(1)+A(3), B(1)+B(3));
     bottom = max(A(2), B(2));

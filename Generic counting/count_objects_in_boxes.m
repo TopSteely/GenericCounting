@@ -59,7 +59,7 @@ for i = 1:9963
             % only taking objects with same class into account?
             g = objects(obj).bbox; %bounding box of object
             ground_truth = [g(1) g(2) g(3)-g(1) g(4)-g(2)];
-            proposal = [boxes(b, 2) boxes(b, 1) boxes(b, 3)-boxes(b, 1) boxes(b, 4)-boxes(b, 2)];
+            proposal = [boxes(b, 1) boxes(b, 2) boxes(b, 3)-boxes(b, 1) boxes(b, 4)-boxes(b, 2)];
             [int, p_overlap] = overlap(im, ground_truth, proposal, 'rounded');
             if overlaps(i, b, cl) == -1
                 overlaps(i, b, cl) = p_overlap;

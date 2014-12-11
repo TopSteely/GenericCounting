@@ -16,6 +16,8 @@ function [intersection, p] = overlap(A, B, string)
         case 'threshold'
             if p > 0.5
                 p = 1;
+            else
+                p = 0;
             end
         case 'rounded'
             p = round(surface_intersection / surface_ground_truth* 10)/10;
@@ -32,5 +34,5 @@ function [intersection, p] = overlap(A, B, string)
     end
     if p>1
         'whaaaaaat??????'
-    end
+    end    
 end

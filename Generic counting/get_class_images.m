@@ -30,7 +30,7 @@ sigma = 0.8;
 VOCinit;
 VOCopts.annopath = '/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/Annotations/%s.xml';
 cl_im = '/home/t/Schreibtisch/Thesis/ClassImages/%s.txt';
-class = 'sheep';
+class = 'boat';
 class_images = [];
 tic
 for i = 1:9963

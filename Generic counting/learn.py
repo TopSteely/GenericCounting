@@ -1,5 +1,4 @@
 from sklearn import linear_model
-import random
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,32 +6,65 @@ import pylab
 
 class_ = 'all'
 
-
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    
+    
 def main():
     criteria = ['partial', 'threshold', 'complete']
     alphas = [0.000001, 0.001, 0.1, 1, 10, 100]
     epsilons = [0.0005, 0.005, 0.1,  0.5, 1, 5, 10]
     eta0s = [0.0000000001, 0.000000001, 0.00000000001]
-    # train on 1:8000, test on 8001:end
+    subsample = 15  # 9963 for all
+    # get labels, features
+    test_imgs, train_imgs = get_seperation()
+    X_p, y_p = get_data(class_, test_imgs, train_imgs, subsample, 'training', criteria[0])
+    X_p_test, y_p_test = get_data(class_, test_imgs, train_imgs, subsample, 'test', criteria[0])
+    print bcolors.WARNING + "partial loaded" + bcolors.ENDC
+#    X_t, y_t = get_data(class_, test_imgs, train_imgs, subsample, 'training', criteria[1])
+#    X_t_test, y_t_test = get_data(class_, test_imgs, train_imgs, subsample, 'test', criteria[1])
+#    print bcolors.WARNING + "threshold loaded" + bcolors.ENDC
+#    X_c, y_c = get_data(class_, test_imgs, train_imgs, subsample, 'training', criteria[2])
+#    X_c_test, y_c_test = get_data(class_, test_imgs, train_imgs, subsample, 'test', criteria[2])
+#    print bcolors.WARNING + "complete loaded" + bcolors.ENDC
+    #TODO: save in files
     for c in criteria:
         for a in alphas:
             for es in epsilons:
                 for ets in eta0s:
-                    subsample = 2  # 9963 for all
-
-                    # get labels, features
-                    X, y = get_data(class_, subsample, 'training', c)
-                    #X_, y_ = get_negs(600)
+                    if c == 'partial':
+                        X = X_p
+                        y = y_p
+                        X_test = X_p_test
+                        y_test = y_p_test
+                    elif c == 'threshold':
+                        X = X_t
+                        y = y_t
+                        X_test = X_t_test
+                        y_test = y_t_test
+                    elif c == 'complete':
+                        X = X_c
+                        y = y_c
+                        X_test = X_c_test
+                        y_test = y_c_test
 
                     # learn
                     clf = linear_model.SGDRegressor(alpha=a, epsilon=es, eta0=ets, fit_intercept=True,
                        l1_ratio=0.15, learning_rate='invscaling', loss='squared_loss',
                        n_iter=200, penalty='l2', power_t=0.25, random_state=None,
                        shuffle=False, verbose=0, warm_start=False)
+                    print X.__len__()
+                    print y.__len__()
                     clf.fit(X, y)
-
+                    print bcolors.WARNING + "model learned" + bcolors.ENDC
                     # predict
-                    X_test, y_test = get_data(class_, 1, 'test', c)
                     pred = clf.predict(X_test)
                     mse = sum(((pred - y_test) ** 2)) / y_test.__len__()
 
@@ -52,7 +84,19 @@ def main():
                     pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + c + str(a) + str(es) + str(ets) + '.png')
 
 
-def get_data(class_, sample, str, criteria):
+def get_seperation():
+    file = open('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/ImageSets/Layout/test.txt')
+    test_imgs = []
+    train_imgs = []
+    for line in file:
+        test_imgs.append(int(line))
+    for i in range(9963):
+        if i not in test_imgs:
+            train_imgs.append(i)
+    return test_imgs, train_imgs
+    
+    
+def get_data(class_, test_imgs, train_imgs, sample, str, criteria):
     features = []
     labels = []
     class_images = []
@@ -61,20 +105,18 @@ def get_data(class_, sample, str, criteria):
         file = open('/home/t/Schreibtisch/Thesis/ClassImages/'+ class_+'.txt', 'r')
         for line in file:
             im_nr = int(line)
-            if str == 'training' and im_nr <= 8000:
+            if str == 'training' and im_nr in train_imgs:
                 class_images.append(im_nr)
-            elif str == 'test' and im_nr > 8000:
+            elif str == 'test' and im_nr in test_imgs:
                 class_images.append(im_nr)
         print class_images.__len__()
     else:
         if str == 'training':
-            class_images = [216, 243]#range(8000)
+            class_images = train_imgs
         elif str == 'test':
-            class_images = [657]#range(8001,9963)
-    # shuffle and take only subsample
-    # TODO: should i really shuffle here? experiment isn't reproducable
-    #random.shuffle(class_images)
+            class_images = test_imgs
     for i in class_images[0:sample]:
+        print i
         fs = get_features(i)
         if fs != []:
             features.extend(fs)
@@ -85,10 +127,10 @@ def get_data(class_, sample, str, criteria):
 
 def get_features(i):
     features = []
-    if os.path.isfile('/home/t/Schreibtisch/Thesis/Features/'+ (format(i, "06d")) +'.txt'):
-        file = open('/home/t/Schreibtisch/Thesis/Features/'+ (format(i, "06d")) +'.txt', 'r')
+    if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt'):
+        file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+(format(i, "06d")) +'.txt', 'r')
     else:
-        print 'warning'
+        print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt does not exist '
         return features
     for line in file:
         f = []
@@ -101,7 +143,11 @@ def get_features(i):
 
 def get_labels(i, criteria):
     labels = []
-    file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+ (format(i, "06d")) + '_' + criteria + '.txt', 'r')
+    if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+(format(i, "06d")) + '_' + criteria + '.txt'):
+        file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+(format(i, "06d")) + '_' + criteria + '.txt', 'r')
+    else:
+        print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+(format(i, "06d")) + '_' + criteria + '.txt does not exist '
+        return labels
     for line in file:
         tmp = line.split()[0]
         labels.append(float(tmp))
@@ -114,7 +160,7 @@ def get_negs(num):
     class_images = range(9963)
     #random.shuffle(class_images)
     for i in class_images:
-        if os.path.isfile('/home/t/Schreibtisch/Thesis/Output/'+ (format(i, "06d")) +'n.txt'):
+        if os.path.isfile('/home/t/Schreibtisch/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'n.txt'):
             file = open('/home/t/Schreibtisch/Thesis/Output/'+ (format(i, "06d")) +'n.txt', 'r')
             for line in file:
                 f = []
@@ -126,7 +172,6 @@ def get_negs(num):
             if found == num:
                 return features, np.zeros(features.__len__())
 
-
-
+    
 if __name__ == "__main__":
     main()

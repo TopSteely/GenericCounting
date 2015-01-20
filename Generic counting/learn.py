@@ -3,8 +3,10 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pylab
+import pickle
 
-class_ = 'all'
+class_ = 'sheep'
+debug = False
 
 class bcolors:
     HEADER = '\033[95m'
@@ -19,73 +21,82 @@ class bcolors:
     
 def main():
     criteria = ['partial', 'threshold', 'complete']
-    alphas = [0.000001, 0.001, 0.1, 1, 10, 100]
-    epsilons = [0.0005, 0.005, 0.1,  0.5, 1, 5, 10]
-    eta0s = [0.0000000001, 0.000000001, 0.00000000001]
-    subsample = 15  # 9963 for all
+    alphas = [0.001, 0.1, 1, 10, 100]
+    #epsilons = [0.0005, 0.005, 0.1,  0.5, 1, 5, 10]
+    eta0s = [0.00001, 0.000001, 0.00000001, 0.0000001]
     # get labels, features
     test_imgs, train_imgs = get_seperation()
-    X_p, y_p = get_data(class_, test_imgs, train_imgs, subsample, 'training', criteria[0])
-    X_p_test, y_p_test = get_data(class_, test_imgs, train_imgs, subsample, 'test', criteria[0])
-    print bcolors.WARNING + "partial loaded" + bcolors.ENDC
-#    X_t, y_t = get_data(class_, test_imgs, train_imgs, subsample, 'training', criteria[1])
-#    X_t_test, y_t_test = get_data(class_, test_imgs, train_imgs, subsample, 'test', criteria[1])
-#    print bcolors.WARNING + "threshold loaded" + bcolors.ENDC
-#    X_c, y_c = get_data(class_, test_imgs, train_imgs, subsample, 'training', criteria[2])
-#    X_c_test, y_c_test = get_data(class_, test_imgs, train_imgs, subsample, 'test', criteria[2])
-#    print bcolors.WARNING + "complete loaded" + bcolors.ENDC
-    #TODO: save in files
     for c in criteria:
         for a in alphas:
-            for es in epsilons:
-                for ets in eta0s:
-                    if c == 'partial':
-                        X = X_p
-                        y = y_p
-                        X_test = X_p_test
-                        y_test = y_p_test
-                    elif c == 'threshold':
-                        X = X_t
-                        y = y_t
-                        X_test = X_t_test
-                        y_test = y_t_test
-                    elif c == 'complete':
-                        X = X_c
-                        y = y_c
-                        X_test = X_c_test
-                        y_test = y_c_test
-
-                    # learn
-                    clf = linear_model.SGDRegressor(alpha=a, epsilon=es, eta0=ets, fit_intercept=True,
-                       l1_ratio=0.15, learning_rate='invscaling', loss='squared_loss',
-                       n_iter=200, penalty='l2', power_t=0.25, random_state=None,
-                       shuffle=False, verbose=0, warm_start=False)
-                    print X.__len__()
-                    print y.__len__()
-                    clf.fit(X, y)
-                    print bcolors.WARNING + "model learned" + bcolors.ENDC
-                    # predict
-                    pred = clf.predict(X_test)
-                    mse = sum(((pred - y_test) ** 2)) / y_test.__len__()
-
-                    # plot
-                    plt.plot(y_test, pred, 'ro')
-                    plt.plot([0,1,2,3,4])
-                    plt.axis([0, max(y_test) + 0.01, 0, max(pred) + 0.01])
-                    plt.xlabel('true value')
-                    plt.ylabel('predicted value')
-                    plt.title('Trained on ' + str(X.__len__()) + ' ' + class_ + ' boxes, tested on ' + str(y_test.__len__()) + ' ' + class_ + ' boxes \n alpha=' + str(a) + ', '+\
-                              'epsilon=' + str(es) + ' , eta=' + str(ets) + ' - ' + c)
-                    plt.text(0.02,0.02,'Mean Squared Error:\n' + str(mse), verticalalignment='bottom',
-                                     horizontalalignment='left',
-                                     fontsize=10,
-                                     bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
-                    #plt.show()
-                    pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + c + str(a) + str(es) + str(ets) + '.png')
+            #for es in epsilons: # no change of epsilon with loss=squared loss
+            for ets in eta0s:
+                    print c,a,ets
+                    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle'):
+                        with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle', 'rb') as handle:
+                            clf = pickle.load(handle)
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle'):
+                        with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'rb') as handle:
+                            clf = pickle.load(handle)
+                    else:
+                        # learn
+                        clf = linear_model.SGDRegressor(alpha=1, epsilon=0.1, eta0=ets, fit_intercept=True,
+                           l1_ratio=0.15, learning_rate='invscaling', loss='squared_loss',
+                           n_iter=np.ceil(10**6 / 40), penalty='l2', power_t=0.25, random_state=None,
+                           shuffle=True, verbose=1, warm_start=True)
+                        #clf = linear_model.LinearRegression()
+                        for minibatch in range(0,200,20):
+                            X_p, y_p = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 20, 'training', c)
+                            if X_p != []:
+                                n_iter_ = int(np.ceil(10**6 / X_p.__len__()))
+                                for epoch in range(n_iter_):
+                                    #if epoch % 1000 == 0:
+                                    print epoch
+                                    clf.partial_fit(X_p, y_p)
+                        print "model learned"
+                        with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'wb') as handle:
+                            pickle.dump(clf, handle)
+                    
+                        # predict
+                        se = 0.0
+                        n = 0
+                        max_pred = 0
+                        max_y_p_test = 0
+                        step = 20
+                        for minibatch in range(0,200,step):
+                            X_p_test, y_p_test = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + step, 'test', c)
+                            if X_p_test != []:
+                                if max(y_p_test) > max_y_p_test:
+                                    max_y_p_test = max(y_p_test)
+                                pred = clf.predict(X_p_test)
+                                if max(pred) > max_pred:
+                                    max_pred = max(pred)
+                                se += sum(((pred - y_p_test) ** 2))
+                                n += y_p_test.__len__()
+                                if debug == True:
+                                    print pred,y_p_test, se, n, (se/n)
+                                    raw_input()
+                                print (se/n)
+                                if debug == False:
+                                    # plot
+                                    plt.plot(y_p_test, pred, 'ro')
+                                    plt.plot([0,1,2,3,4,5,6,7,8,9,10,11,12,13])
+                        mse = se/n
+                        plt.axis([0, max_y_p_test + 0.01, 0, max_pred + 0.01])
+                        plt.xlabel('true value')
+                        plt.ylabel('predicted value')
+                        plt.title('alpha=' + str(a) + ', '+\
+                                  'eta=' + str(ets) + ' - ' + c)
+                        plt.text(0.02,0.02,'Mean Squared Error:\n' + str(mse), verticalalignment='bottom',
+                                         horizontalalignment='left',
+                                         fontsize=10,
+                                         bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
+                        #plt.show()
+                        pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '.png')
+                        plt.clf()
 
 
 def get_seperation():
-    file = open('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/ImageSets/Layout/test.txt')
+    file = open('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/ImageSets/Main/test.txt')
     test_imgs = []
     train_imgs = []
     for line in file:
@@ -96,7 +107,7 @@ def get_seperation():
     return test_imgs, train_imgs
     
     
-def get_data(class_, test_imgs, train_imgs, sample, str, criteria):
+def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
     features = []
     labels = []
     class_images = []
@@ -105,39 +116,51 @@ def get_data(class_, test_imgs, train_imgs, sample, str, criteria):
         file = open('/home/t/Schreibtisch/Thesis/ClassImages/'+ class_+'.txt', 'r')
         for line in file:
             im_nr = int(line)
-            if str == 'training' and im_nr in train_imgs:
+            if phase == 'training' and im_nr in train_imgs:
                 class_images.append(im_nr)
-            elif str == 'test' and im_nr in test_imgs:
+            elif phase == 'test' and im_nr in test_imgs:
                 class_images.append(im_nr)
-        print class_images.__len__()
     else:
-        if str == 'training':
+        if phase == 'training':
             class_images = train_imgs
-        elif str == 'test':
+        elif phase == 'test':
             class_images = test_imgs
-    for i in class_images[0:sample]:
+    for i in class_images[start:end]:
         print i
         fs = get_features(i)
         if fs != []:
-            features.extend(fs)
-            l = get_labels(i, criteria)
-            labels.extend(l)
+            if debug == True:
+                features.append(fs)
+                tmp = get_labels(i, criteria)
+                ll = int(tmp[0])
+                labels.append(ll)
+            else:
+                features.extend(fs)
+                l = get_labels(i, criteria)
+                labels.extend(l)
+        assert (features.__len__() == labels.__len__()), "uneven feature label size!"
     return features, labels
 
 
 def get_features(i):
     features = []
     if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt'):
-        file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+(format(i, "06d")) +'.txt', 'r')
+        file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt', 'r')
     else:
         print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt does not exist '
         return features
-    for line in file:
-        f = []
+    if debug == True:
+        line = file.readline()
         tmp = line.split(',')
         for s in tmp:
-            f.append(float(s))
-        features.append(f)
+            features.append(float(s))
+    else:
+        for line in file:
+            f = []
+            tmp = line.split(',')
+            for s in tmp:
+                f.append(float(s))
+            features.append(f)
     return features
 
 

@@ -2,11 +2,14 @@ from sklearn import linear_model
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.image as mpim
 import pylab
 import pickle
+import scipy
+import numpy
 
 class_ = 'sheep'
-debug = False
+baseline = False
 
 class bcolors:
     HEADER = '\033[95m'
@@ -31,10 +34,16 @@ def main():
             #for es in epsilons: # no change of epsilon with loss=squared loss
             for ets in eta0s:
                     print c,a,ets
-                    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle'):
+                    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'_baseline.pickle') and baseline == True:
+                        with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'_baseline.pickle', 'rb') as handle:
+                            clf = pickle.load(handle)
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'_baseline.pickle') and baseline == True:
+                        with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'_baseline.pickle', 'rb') as handle:
+                            clf = pickle.load(handle)
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle') and baseline == False:
                         with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle', 'rb') as handle:
                             clf = pickle.load(handle)
-                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle'):
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle') and baseline == False:
                         with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'rb') as handle:
                             clf = pickle.load(handle)
                     else:
@@ -47,50 +56,90 @@ def main():
                         for minibatch in range(0,200,20):
                             X_p, y_p = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 20, 'training', c)
                             if X_p != []:
-                                n_iter_ = int(np.ceil(10**6 / X_p.__len__()))
+                                n_iter_ = int(np.ceil(10**5 / X_p.__len__()))
                                 for epoch in range(n_iter_):
                                     #if epoch % 1000 == 0:
                                     print epoch
                                     clf.partial_fit(X_p, y_p)
                         print "model learned"
-                        with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'wb') as handle:
-                            pickle.dump(clf, handle)
+                        if baseline == True:
+                            with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'_baseline.pickle', 'wb') as handle:
+                                pickle.dump(clf, handle)
+                        else:
+                            with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'wb') as handle:
+                                pickle.dump(clf, handle)
                     
-                        # predict
-                        se = 0.0
-                        n = 0
-                        max_pred = 0
-                        max_y_p_test = 0
-                        step = 20
-                        for minibatch in range(0,200,step):
-                            X_p_test, y_p_test = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + step, 'test', c)
-                            if X_p_test != []:
-                                if max(y_p_test) > max_y_p_test:
-                                    max_y_p_test = max(y_p_test)
-                                pred = clf.predict(X_p_test)
-                                if max(pred) > max_pred:
-                                    max_pred = max(pred)
-                                se += sum(((pred - y_p_test) ** 2))
-                                n += y_p_test.__len__()
-                                if debug == True:
-                                    print pred,y_p_test, se, n, (se/n)
-                                    raw_input()
-                                print (se/n)
-                                if debug == False:
-                                    # plot
-                                    plt.plot(y_p_test, pred, 'ro')
-                                    plt.plot([0,1,2,3,4,5,6,7,8,9,10,11,12,13])
-                        mse = se/n
-                        plt.axis([0, max_y_p_test + 0.01, 0, max_pred + 0.01])
-                        plt.xlabel('true value')
-                        plt.ylabel('predicted value')
-                        plt.title('alpha=' + str(a) + ', '+\
-                                  'eta=' + str(ets) + ' - ' + c)
-                        plt.text(0.02,0.02,'Mean Squared Error:\n' + str(mse), verticalalignment='bottom',
-                                         horizontalalignment='left',
-                                         fontsize=10,
-                                         bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
-                        #plt.show()
+                    # predict
+                    se = 0.0
+                    n = 0
+                    max_pred = 0
+                    max_y_p_test = 0
+                    step = 20
+                    ax1 = plt.subplot2grid((3,3), (0,0), colspan=2)
+                    ax2 = plt.subplot2grid((3,3), (1,0), colspan=2, rowspan=2)
+                    ax3 = plt.subplot2grid((3,3), (1, 2), rowspan=2)
+                    pearson_x = []
+                    pearson_y = []
+                    for minibatch in range(0,200,step):
+                        X_p_test, y_p_test, investigate = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + step, 'test', c)
+                        if X_p_test != []:
+                            if max(y_p_test) > max_y_p_test:
+                                max_y_p_test = max(y_p_test)
+                            pred = clf.predict(X_p_test)
+                            investigate.append(pred)
+                            max_over = 0
+                            max_under = 0
+                            max_over_ind = []
+                            max_under_ind = []
+                            for row, label in zip(investigate, pred.tolist()):
+                                #print row, label
+                                if row[2] - label > max_under:
+                                    max_under = row[2] - label
+                                    max_under_ind = [row[0],row[1]]
+                                if label - row[2] > max_over:
+                                    max_over = label - row[2]
+                                    max_over_ind = [row[0],row[1]]
+                            print max_over, max_over_ind, max_under, max_under_ind
+                            if max(pred) > max_pred:
+                                max_pred = max(pred)
+                            se += sum(((pred - y_p_test) ** 2))
+                            n += y_p_test.__len__()
+                            print (se/n)
+                            #if baseline == False:
+                                # plot
+                            if pearson_x == []:
+                                pearson_x = y_p_test
+                                pearson_y = pred
+                            elif y_p_test.__len__() != 0:
+                                pearson_x = numpy.concatenate((pearson_x , y_p_test))
+                                pearson_y = numpy.concatenate((pearson_y , pred))
+                            y_p_test = numpy.log10(y_p_test)
+                            ax2.plot(numpy.log10([0.1,1,2,3,4,5,6,7,8,9,10,11,12,13]), [0.1,1,2,3,4,5,6,7,8,9,10,11,12,13])                                
+                            ax2.plot(y_p_test, pred, 'ro')
+                            # plot histogram of true value
+                            bins = np.arange(-1, 1.5, 0.1)
+                            ax1.hist(y_p_test, bins=bins)
+                            # plot histogram of predictions
+                            hist1, bins1 = np.histogram(pred, bins=50)
+                            width = 0.7 * (bins1[1] - bins1[0])
+                            center = (bins1[:-1] + bins1[1:]) / 2
+                            ax3.bar(center, hist1, align='center', width=width)
+                            plt.show()
+
+                    mse = se/n
+                    pearson_r = scipy.stats.pearsonr(pearson_x, pearson_y)
+                    ax2.axis([-1.1, numpy.log10(max_y_p_test) + 0.01, -1, max_pred + 0.01])
+                    ax2.set_xlabel('log(true value)')
+                    ax2.set_ylabel('predicted value')
+                    ax2.text(-1,0.02,'Mean Squared Error:\n' + str(mse) + '\nPearson:\n' + str(pearson_r[0]), verticalalignment='bottom',
+                                     horizontalalignment='left',
+                                     fontsize=10,
+                                     bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
+                    #plt.show()
+                    if baseline == True:
+                        pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '_baseline.png')
+                        plt.clf()
+                    else:
                         pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '.png')
                         plt.clf()
 
@@ -110,6 +159,7 @@ def get_seperation():
 def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
     features = []
     labels = []
+    bla = []
     class_images = []
     if class_ != 'all':
         # read images with class from file
@@ -129,17 +179,22 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
         print i
         fs = get_features(i)
         if fs != []:
-            if debug == True:
+            if baseline == True:                    
                 features.append(fs)
                 tmp = get_labels(i, criteria)
                 ll = int(tmp[0])
                 labels.append(ll)
+                #if phase == 'test':
+                #    im = mpim.imread('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/'+ (format(i, "06d")) +'.jpg')
+                #    plt.imshow(im)
             else:
                 features.extend(fs)
                 l = get_labels(i, criteria)
                 labels.extend(l)
         assert (features.__len__() == labels.__len__()), "uneven feature label size!"
-    return features, labels
+        for ind in range(l.__len__()):
+            bla.append([i, ind, l[ind]])
+    return features, labels, bla
 
 
 def get_features(i):
@@ -149,7 +204,7 @@ def get_features(i):
     else:
         print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt does not exist '
         return features
-    if debug == True:
+    if baseline == True:
         line = file.readline()
         tmp = line.split(',')
         for s in tmp:

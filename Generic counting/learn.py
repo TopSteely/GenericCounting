@@ -9,7 +9,7 @@ import scipy
 import numpy
 
 class_ = 'sheep'
-baseline = False
+baseline = 2
 
 class bcolors:
     HEADER = '\033[95m'
@@ -34,16 +34,16 @@ def main():
             #for es in epsilons: # no change of epsilon with loss=squared loss
             for ets in eta0s:
                     print c,a,ets
-                    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'_baseline.pickle') and baseline == True:
+                    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'_baseline.pickle') and baseline == 1:
                         with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'_baseline.pickle', 'rb') as handle:
                             clf = pickle.load(handle)
-                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'_baseline.pickle') and baseline == True:
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'_baseline.pickle') and baseline == 1:
                         with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'_baseline.pickle', 'rb') as handle:
                             clf = pickle.load(handle)
-                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle') and baseline == False:
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle') and baseline == 2:
                         with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+str(a)+str(ets)+'.pickle', 'rb') as handle:
                             clf = pickle.load(handle)
-                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle') and baseline == False:
+                    elif os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle') and baseline == 2:
                         with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'rb') as handle:
                             clf = pickle.load(handle)
                     else:
@@ -92,7 +92,7 @@ def main():
                             max_over_ind = []
                             max_under_ind = []
                             for row, label in zip(investigate, pred.tolist()):
-                                #print row, label
+                                print row, label
                                 if row[2] - label > max_under:
                                     max_under = row[2] - label
                                     max_under_ind = [row[0],row[1]]
@@ -136,8 +136,11 @@ def main():
                                      fontsize=10,
                                      bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
                     #plt.show()
-                    if baseline == True:
-                        pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '_baseline.png')
+                    if baseline == 1:
+                        pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '_baseline_1.png')
+                        plt.clf()
+                    elif baseline == 2:
+                        pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '_baseline_2.png')
                         plt.clf()
                     else:
                         pylab.savefig('/home/t/Schreibtisch/Thesis/Plots/' + str(class_) + c + str(a) + str(ets) + '.png')
@@ -179,11 +182,12 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
         print i
         fs = get_features(i)
         if fs != []:
-            if baseline == True:                    
+            if baseline == 1 or baseline == 2:                    
                 features.append(fs)
                 tmp = get_labels(i, criteria)
                 ll = int(tmp[0])
                 labels.append(ll)
+                bla.append([i, 0, ll])
                 #if phase == 'test':
                 #    im = mpim.imread('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/'+ (format(i, "06d")) +'.jpg')
                 #    plt.imshow(im)
@@ -191,9 +195,9 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
                 features.extend(fs)
                 l = get_labels(i, criteria)
                 labels.extend(l)
+                for ind in range(l.__len__()):
+                    bla.append([i, ind, l[ind]])
         assert (features.__len__() == labels.__len__()), "uneven feature label size!"
-        for ind in range(l.__len__()):
-            bla.append([i, ind, l[ind]])
     return features, labels, bla
 
 
@@ -204,7 +208,7 @@ def get_features(i):
     else:
         print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt does not exist '
         return features
-    if baseline == True:
+    if baseline == 1 or baseline == 2:
         line = file.readline()
         tmp = line.split(',')
         for s in tmp:

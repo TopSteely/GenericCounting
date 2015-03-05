@@ -52,7 +52,6 @@ def main():
                l1_ratio=0.15, learning_rate='invscaling', loss='squared_loss',
                n_iter=np.ceil(10**6 / 40), penalty='l2', power_t=0.25, random_state=None,
                shuffle=True, verbose=1, warm_start=True)
-            #clf = linear_model.LinearRegression()
             for minibatch in range(0,200,20):
                 X_p, y_p, _ = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 20, 'training', c)
                 if X_p != []:
@@ -71,10 +70,50 @@ def main():
             else:
                 with open('/home/t/Schreibtisch/Thesis/Models/'+c+str(a)+str(ets)+'.pickle', 'wb') as handle:
                     pickle.dump(clf, handle)
-        
+                    
+        clf_sp = linear_model.SGDRegressor(alpha=a, epsilon=0.1, eta0=eta0s[2], fit_intercept=True,
+               l1_ratio=0.15, learning_rate='invscaling', loss='squared_loss',
+               n_iter=np.ceil(10**6 / 40), penalty='l2', power_t=0.25, random_state=None,
+               shuffle=True, verbose=1, warm_start=True)
+        samples = 80
+        hyper_feats = []
+        labels = []
+        for minibatch in range(0, 75, 1):
+            hyper_feat = []
+            X_sp, y_sp, candidates = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 1, 'training', c)
+            img = candidates[0][0]
+            target = candidates[0][2]
+            if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/'+ (format(img, "06d")) +'.txt'):
+                f = open('/home/t/Schreibtisch/Thesis/SS_Boxes/'+ (format(img, "06d")) +'.txt', 'r')
+            coords = []
+            for candidate, line in zip(candidates, f):
+                tmp = line.split(',')
+                coord = []
+                for s in tmp:
+                    coord.append(float(s))
+                coord.append(candidate[2])
+                coords.append(coord)
+            # subsample boxes, since we need equal number of features for all images
+            shuffle(coords)
+#            for box in coords[0:samples]:
+#                for box_ in coords[0:samples]:
+#                    hyper_feat.append(get_hyper_features(box, box_))
+            if coords.__len__() < 80:
+                continue
+            for box in coords[0:samples]:
+                hyper_feat.extend(box)
+            assert hyper_feat.__len__() == samples * 5, "not enough feat"
+            hyper_feats.append(hyper_feat)
+            labels.append(target)
+        for epoch in range(int(np.ceil(10**5 / hyper_feats.__len__()))):
+            print epoch, hyper_feats.__len__(), labels.__len__()
+            clf_sp.partial_fit(hyper_feats, labels)
+            
+                
         # predict
         se = 0.0
         se_size = 0.0
+        se_learned = 0.0
         n = 0
         max_pred = 0
         max_y_p_test = 0
@@ -87,9 +126,13 @@ def main():
         ax4 = plt.subplot2grid((3,3), (0,0), colspan=2)
         ax5 = plt.subplot2grid((3,3), (1,0), colspan=2, rowspan=2)
         ax6 = plt.subplot2grid((3,3), (1, 2), rowspan=2)
+        fig3 = plt.figure(3)
+        ax7 = plt.subplot2grid((3,3), (0,0), colspan=2)
+        ax8 = plt.subplot2grid((3,3), (1,0), colspan=2, rowspan=2)
+        ax9 = plt.subplot2grid((3,3), (1, 2), rowspan=2)
         pearson_x = []
         pearson_y = []
-        for minibatch in range(0, 100, step):
+        for minibatch in range(0, 80, step):
             X_p_test, y_p_test, investigate = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + step, 'test', c)
             if X_p_test != []:
                 if max(y_p_test) > max_y_p_test:
@@ -106,14 +149,27 @@ def main():
                 avgs_size = np.zeros((h, w))
                 avgs = np.zeros((h, w))
                 boxes = []
+                prediction_boxes = []
+                hyper_feats = []
                 for row, prediction, line in zip(investigate, pred.tolist(), f):
                     tmp = line.split(',')
                     coord = []
                     for s in tmp:
                         coord.append(float(s))
-                    if row[1] == 0:
-                        assert (coord[0] == 0 and coord[1] == 0 and coord[2] == h-1 and coord[3] == w-1, "first box not whole image"+str(coord))
+                    #if row[1] == 0:
+                        #assert coord[0] == 0 and coord[1] == 0 and coord[2] == h-1 and coord[3] == w-1, "first box not whole image"+str(coord)
                     boxes.append([coord, prediction])
+                    coord.append(prediction)
+                    prediction_boxes.append(coord)
+                if boxes.__len__() < 80:
+                    continue
+                shuffle(prediction_boxes)
+                for box in prediction_boxes[0:samples]:
+                    hyper_feats.extend(box)
+                image_prediction = clf_sp.predict(hyper_feats)
+                
+                
+                    
                 for x in range(w):
                     for y in range(h):
                         pixel_sum = 0
@@ -131,19 +187,23 @@ def main():
                         avgs[y,x] = pixel_sum / in_s
                 se += sum(((np.sum(avgs) - y_p_test[0]) ** 2))
                 se_size += sum(((np.sum(avgs_size) - y_p_test[0]) ** 2))
+                se_learned += (image_prediction - y_p_test[0]) ** 2
                 n += 1
                 print y_p_test[0], np.sum(avgs_size), sum(((np.sum(avgs_size) - y_p_test[0]) ** 2)), '->', (se_size/n)
                 print y_p_test[0], np.sum(avgs), sum(((np.sum(avgs) - y_p_test[0]) ** 2)), '->', (se/n)
+                print y_p_test[0], image_prediction, (image_prediction - y_p_test[0]) ** 2, '->', (se_learned/n)
                 #if baseline == False:
                     # plot
                 if pearson_x == []:
                     pearson_x = [y_p_test[0]]
                     pearson_y = [np.sum(avgs)]
                     pearson_y_size = [np.sum(avgs_size)]
+                    pearson_y_learned = [image_prediction]
                 elif y_p_test.__len__() != 0:
                     pearson_x.append(y_p_test[0])
                     pearson_y.append(np.sum(avgs))
                     pearson_y_size.append(np.sum(avgs_size))
+                    pearson_y_learned.append(image_prediction)
                 # convert to log-scale for plotting
                 y_p_test = numpy.log10(y_p_test)
                 plt.figure(1)
@@ -169,17 +229,34 @@ def main():
                 width = 0.7 * (bins1[1] - bins1[0])
                 center = (bins1[:-1] + bins1[1:]) / 2
                 ax6.bar(center, hist1, align='center', width=width)
+                
+                plt.figure(3)
+                ax8.plot(numpy.log10([0.1,1,2,3,4,5,6,7,8,9,10,11,12,13]), [0.1,1,2,3,4,5,6,7,8,9,10,11,12,13])                                
+                ax8.plot(y_p_test[0], image_prediction, 'ro')
+                # plot histogram of true value
+                bins = np.arange(-1, 1.5, 0.1)
+                ax7.hist(y_p_test, bins=bins)
+                # plot histogram of predictions
+                hist1, bins1 = np.histogram(pred, bins=50)
+                width = 0.7 * (bins1[1] - bins1[0])
+                center = (bins1[:-1] + bins1[1:]) / 2
+                ax9.bar(center, hist1, align='center', width=width)
+                
                 plt.figure(1)
                 plt.show()
                 plt.figure(2)
+                plt.show()
+                plt.figure(3)
                 plt.show()
                 
 
         mse = se/n
         mse_size = se_size/n
+        mse_learned = se_learned/n
         #print pearson_x, pearson_y
         pearson_r = scipy.stats.pearsonr(pearson_x, pearson_y)
         pearson_r_size = scipy.stats.pearsonr(pearson_x, pearson_y_size)
+        pearson_r_learned = scipy.stats.pearsonr(pearson_x, pearson_y_learned)
         plt.figure(1)
         ax2.axis([0 - 0.1, math.log(max(pearson_x)) + 0.1, 0 - 0.1, max(pearson_y_size) + 0.1])
         ax2.set_xlabel('log(true value)')
@@ -195,6 +272,14 @@ def main():
         ax5.set_xlabel('log(true value)')
         ax5.set_ylabel('predicted value')
         ax5.text(-0.1,0.02,'Mean Squared Error:\n' + str(mse) + '\nPearson:\n' + str(pearson_r[0]), verticalalignment='bottom',
+                         horizontalalignment='left',
+                         fontsize=10,
+                         bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
+        plt.figure(3)
+        ax8.axis([0 - 0.1, math.log(max(pearson_x)) + 0.1, 0 - 0.1, max(pearson_y_learned) + 0.1])
+        ax8.set_xlabel('log(true value)')
+        ax8.set_ylabel('predicted value')
+        ax8.text(-0.1,0.02,'Mean Squared Error:\n' + str(mse) + '\nPearson:\n' + str(pearson_r_learned[0]), verticalalignment='bottom',
                          horizontalalignment='left',
                          fontsize=10,
                          bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
@@ -341,14 +426,15 @@ def bool_rect_intersect(A, B):
         #return !(r2.left > r1.right || r2.right < r1.left || r2.top > r1.bottom ||r2.bottom < r1.top);
 
 def get_hyper_features(A, B):
-    if not bool_rect_intersect(A, B):
-        return 0,0,0
+    in_, _ = bool_rect_intersect(A, B)
+    if not in_:
+        return 0, 0, 0
     else:
         left = max(A[0], B[0]);
         right = min(A[2], B[2]);
-        bottom = max(A[1], B[1]);
-        top = min(A[3], B[3]);
-        intersection = [left, bottom, right, top];
+        top = max(A[1], B[1]);
+        bottom = min(A[3], B[3]);
+        intersection = [left, top, right, bottom];
         surface_intersection = (intersection[2]-intersection[0])*(intersection[3]-intersection[1]);
         surface_A = (A[2]- A[0])*(A[3]-A[1]);
         surface_B = (B[2]- B[0])*(B[3]-B[1]);

@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import pickle
 import numpy
 import math
+import sys
 import random
 import networkx as nx
 import pyximport; pyximport.install(pyimport = True)
@@ -31,6 +32,8 @@ class_ = 'sheep'
 baseline = False
 add_window_size = False
 iterations = 0
+subsampling = True
+c = 'partial'
 
 class bcolors:
     HEADER = '\033[95m'
@@ -59,31 +62,36 @@ def find_children(sucs, parent):
     
     return children
 
-def loss_simple(w, data):
-    G, levels, y_p, new_matrix, boxes, ground_truths, alphas = data
-    return sum((y_p - np.dot(w,np.array(new_matrix).reshape(4096,len(new_matrix)))) ** 2) + alphas[0] * np.dot(w.reshape(1,4096),w.reshape(4096,1))
-
-def loss(w, data, predecs, children, boxes_set):
-    G, levels, y_p, new_matrix, boxes, ground_truths, alphas = data
+def loss(w, data, predecs, children):
+    
+    G, levels, y_p, x, boxes, ground_truths, alphas = data
     parent_child = 0.0
     layers = 0.0
-    for node in boxes_set:
+    for node in list(G.nodes())[1:]:
         parent = predecs.values()[node-1]
-        parent_pred = np.dot(w,new_matrix[parent])
-        child_pred = np.dot(w,new_matrix[node])
+        parent_pred = np.dot(w,x[parent])
+        child_pred = np.dot(w,x[node])
         parent_child += child_pred - parent_pred if child_pred > parent_pred else 0
         children_layer = count_per_level(boxes, ground_truths, children[parent])
         layers += children_layer - parent_pred if children_layer > parent_pred else 0
-    return sum((y_p - np.dot(w,np.array(new_matrix).reshape(4096,len(new_matrix)))) ** 2) + alphas[0] * np.dot(w.reshape(1,4096),w.reshape(4096,1)) + alphas[1] * parent_child + alphas[2] * layers
+    ret = sum((y_p - np.dot(w,np.array(x).reshape(4096,len(x)))) ** 2) + alphas[0] * np.dot(w.reshape(1,4096),w.reshape(4096,1)) + alphas[1] * parent_child + alphas[2] * layers
+    first = sum((y_p - np.dot(w,np.array(x).reshape(4096,len(x)))) ** 2) + alphas[0] * np.dot(w.reshape(1,4096),w.reshape(4096,1))
+    if alphas[1] == 0 and alphas[2] == 0 and alphas[0] != 0:
+        assert ret == first, 'first != ret'
+    return ret
    
+def loss_simple(w,data):
+    y_p = data[2]
+    x = data[3]
+    alpha1 = data[6][0]
+    y_p = y_p[1:]
+    x = x[1:]
+    return sum((y_p - np.dot(w,np.array(x).reshape(4096,len(x)))) ** 2) + alpha1 * np.dot(w.reshape(1,4096),w.reshape(4096,1))
 
-def loss_prime(w,data,predecs,children,holdouts,node,feature):
+def loss_prime(w,data,predecs,children,node,feature):
     G, levels, y, x, boxes, ground_truths, alphas = data
-    for h_ in holdouts:
-        if h_ < node:
-            node-=1
     if len(x) <= node:
-        print len(x), node, holdouts
+        print len(x), node
     x_f = x[node][feature]
     y_node = y[node]
     parent = predecs.values()[node-1]
@@ -91,261 +99,252 @@ def loss_prime(w,data,predecs,children,holdouts,node,feature):
     child_pred = y[node]
     parent_child = 0
     if child_pred > parent_pred:
-        parent_child = x_f #silvia said w[feature]
+        parent_child = x_f
     #children = find_children(sucs, parent)
     children_layer = count_per_level(boxes, ground_truths, children[parent])
     layers = 0
     if children_layer > parent_pred:
-        layers = x_f #silvia said w[feature]
+        layers = x_f
     
-    window_error = (y_node - w[feature] * x_f) *(- x_f) 
+    window_error = (y_node - w[feature] * x_f) *(x_f) 
     alpha_weights = alphas[0] * w[feature]
     first_constraint = alphas[1] * parent_child
     second_constrained = alphas[2] * layers * np.sign(x_f * w[feature])
-    return window_error + alpha_weights + first_constraint + second_constrained
+    if alphas[1] == 0 and alphas[2] == 0:
+        assert first_constraint == 0 and second_constrained == 0, "constraints not zero, despite alphas are"
+    ret = window_error + alpha_weights + first_constraint + second_constrained
+    return ret
+    
+def loss_prime_simple(w,node,feature,data):
+    x = data[3]
+    y = data[2]
+    alpha1 = data[6][0]
+    x_f = x[node][feature]    
+    y_node = y[node]
+    if feature == 10:
+        print w[feature], x_f, w[feature] * x_f, (y_node - w[feature] * x_f) * (x_f)
+    ret = (y_node - w[feature] * x_f) * (x_f)
+    return ret + alpha1 * w[feature]
 
-def update_weights(w,data,predecs,children,hold_outs,node, learning_rate):
+def update_weights(w,data,predecs,children,node, learning_rate):
     len_features = len(data[3][0])
     w_new = np.zeros(len_features)
     for feature_ in range(len_features):
-        w_new[feature_] = loss_prime(w,data,predecs,children,hold_outs,node,feature_)
-    return w - learning_rate * w_new
-
-
+        w_new[feature_] = loss_prime_simple(w,node,feature_,data)
+    return w + learning_rate * w_new
     
+def like_scikit(w,x,y, learning_rate,alphas):
+    inner_product = 0.0    
+    for f_ in range(len(x)):
+        inner_product += (w[f_] * x[f_])
+    dloss = inner_product - y
+    update = dloss * -learning_rate
+    for f_ in range(len(x)):
+        w[f_] += ((x[f_] * update) + alphas[0] * w[f_])
+    return w
+
+
+def minibatch_(w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, mode):
+    X_p, y_p, inv = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 1, 'training', c)                
+    if X_p != []:
+        boxes = []
+        ground_truth = inv[0][2]
+        img_nr = inv[0][0]
+        if os.path.isfile('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt'):
+            f = open('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt', 'r')
+        else:
+            print 'warning'
+        for line, y in zip(f, inv):
+            tmp = line.split(',')
+            coord = []
+            for s in tmp:
+                coord.append(float(s))
+            boxes.append([coord, y[2]])
+        assert(len(boxes)<500)
+        boxes, y_p, X_p = sort_boxes(boxes, y_p, X_p, 0,500)
+        
+        if os.path.isfile('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt'):
+            gr = open('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt', 'r')
+        ground_truths = []
+        for line in gr:
+           tmp = line.split(',')
+           ground_truth = []
+           for s in tmp:
+              ground_truth.append(int(s))
+           ground_truths.append(ground_truth)
+        
+        #prune boxes
+        pruned_x = []
+        pruned_y = []
+        pruned_boxes = []
+        for i, y_ in enumerate(y_p):
+            if y_ > 0:
+                pruned_x.append(X_p[i])
+                pruned_y.append(y_p[i])
+                pruned_boxes.append(boxes[i])
+        
+        if subsampling and pruned_boxes > subsamples:
+            pruned_x = pruned_x[0:subsamples]
+            pruned_y = pruned_y[0:subsamples]
+            pruned_boxes = pruned_boxes[0:subsamples]
+            
+        if mode == 'mean_variance':
+            sum_x += np.array(pruned_x).sum(axis=0)
+            n_samples += len(pruned_x)
+            sum_sq_x +=  (np.array(pruned_x)**2).sum(axis=0)
+            return sum_x,n_samples,sum_sq_x
+            
+        # create_tree
+        G, levels = create_tree(pruned_boxes)
+        norm_x = []
+        
+        #normalize
+        for p_x in pruned_x:
+            norm_x.append((p_x-mean)/variance)
+        data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, alphas)
+        sucs = nx.dfs_successors(G)
+        
+        predecs = nx.dfs_predecessors(G)
+        
+        #preprocess: node - children
+        children = {}
+        last = -1
+        for node,children_ in zip(sucs.keys(),sucs.values()):
+            if node != last+1:
+                for i in range(last+1,node):
+                    children[i] = []
+                children[node] = children_
+            elif node == last +1:
+                children[node] = children_
+            last = node
+        if mode == 'train':
+            nodes = list(G.nodes())[1:]
+            for node in nodes:
+                w = like_scikit(w,norm_x[node],pruned_y[node],learning_rate,alphas)
+                #w = update_weights(w,data,predecs,children,node, learning_rate)
+        else:
+            loss__.append(loss_simple(w,data))#(w, data, predecs, children))
+    if mode == 'train':
+        return w, len(pruned_y)
+    else:
+        return loss__
+            
 def main():
-    c = 'partial'
     test_imgs, train_imgs = get_seperation()
-    learning_rate = 0.1
     # learn
 #    if os.path.isfile('/home/stahl/Models/'+class_+c+'normalized_constrained.pickle'):
 #        with open('/home/stahl/Models/'+class_+c+'normalized_constrained.pickle', 'rb') as handle:
 #            w = pickle.load(handle)
 #    else:
     loss_ = {}
-    hold_out = {}
-    nr_holdout = 2
-    first_run = True
-    all_alphas = [math.exp(-3)]#,math.exp(-2),math.exp(-1),math.exp(0),math.exp(1),math.exp(2),math.exp(3)]
+    weights = {}
+    gamma = 0.5
+    epochs = 50
+    images = 10
+    subsamples = 10
+    weights_visualization = {}
+    learning_rates = [math.pow(10,-3),math.pow(10,-4),math.pow(10,-5),math.pow(10,-6)]
+    learning_rates_ = {}
+    weights_sample = random.sample(range(4096), 10)
+    all_alphas = [0,math.pow(10,-1),math.pow(10,-2),math.pow(10,-3)]
+    sum_x = np.zeros(4096)
+    n_samples = 0.0
+    sum_sq_x = np.zeros(4096)
+    #TODO: normalize
+    for minibatch in range(0,images):
+        sum_x,n_samples,sum_sq_x = minibatch_([], [],[],[],test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,None,None,'mean_variance')
+    mean = sum_x/n_samples
+    variance = (sum_sq_x - (sum_x * sum_x) / n_samples) / (n_samples - 1)
+    print mean,variance
+    raw_input()
     for alpha1 in all_alphas:
-        for alpha2 in all_alphas:
-            for alpha3 in all_alphas:
-                alphas = [alpha1,alpha2,alpha3]
-                for learning_rate in [0.001]:#, 0.001]:#,001, 0.01]:
-                    w = np.ones(4096)
-                    weights = []
-                    weights_sample = random.sample(range(4096), 10)
-                    for epoch in range(50):
-                        for minibatch in range(0,2,1):
-                            print alphas, learning_rate,epoch, minibatch
-                            X_p, y_p, inv = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 1, 'training', c)                
-                            if X_p != []:
-                                #TODO: prune?
-                                boxes = []
-                                ground_truth = inv[0][2]
-                                img_nr = inv[0][0]
-                                if os.path.isfile('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt'):
-                                    f = open('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt', 'r')
-                                else:
-                                    print 'warning'
-                                for line, y in zip(f, inv):
-                                    tmp = line.split(',')
-                                    coord = []
-                                    for s in tmp:
-                                        coord.append(float(s))
-                                    boxes.append([coord, y[2]])
-                                assert(len(boxes)<500)
-                                boxes, y_p, X_p = sort_boxes(boxes, y_p, X_p, 0,500)
-                                
-                                if os.path.isfile('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt'):
-                                    gr = open('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt', 'r')
-                                ground_truths = []
-                                for line in gr:
-                                   tmp = line.split(',')
-                                   ground_truth = []
-                                   for s in tmp:
-                                      ground_truth.append(int(s))
-                                   ground_truths.append(ground_truth)
-                
-                                # create_tree
-                                G, levels = create_tree(boxes)
-                                # normalize
-                                new_matrix = preprocessing.normalize(X_p, norm='l2', axis=0)
-                                multi_labels = []
-                                root = boxes[0]
-                                boxes_ = boxes[1:]
-                                for box, y,i_ in zip(boxes_, y_p[1:],range(1,len(boxes))):
-                                    if i_ in G.nodes():
-                                       parent = nx.dfs_predecessors(G,i_).values().index(i_)
-                                       parent_pred = y_p[parent]
-                                       for i, b_i in enumerate(levels.values()):
-                                          if any(x == parent for x in b_i):
-                                              level = i
-                                              break
-                                       previous_layer = count_per_level(boxes, ground_truths, levels[level])
-                                    else:
-                                       print len(new_matrix), i_
-                                       if i_ >= len(new_matrix):
-                                          new_matrix = new_matrix[0:-1]
-                                       else:
-                                          new_matrix = np.vstack((new_matrix[0:i_],new_matrix[i_+1:]))
-                #                y_p = y_p[0:6]
-                #                new_matrix = new_matrix[0:6]
-                                # if first run, append two boxes to holdout set -> every model has same holdout set
-                                if first_run == True:
-                                    for_hold_out = random.sample(range(1,len(new_matrix)),nr_holdout)
-                                    hold_out[minibatch] = [for_hold_out[0]]
-                                    for h in for_hold_out[1:]:
-                                        hold_out[minibatch].append(h)
-                                x_without_holdout = []
-                                y_without_holdout = []
-                                without_hold_out = []
-                                # always remove boxes of holdout set from trainingdata
-                                for d in range(len(new_matrix)):
-                                    if d not in hold_out[minibatch]:
-                                        x_without_holdout.append(new_matrix[d])
-                                        y_without_holdout.append(y_p[d])
-                                        without_hold_out.append(d)
-                                data = (G, levels, y_without_holdout, x_without_holdout, boxes, ground_truths, alphas)
-                                sucs = nx.dfs_successors(G)
-                                predecs = nx.dfs_predecessors(G)
-                                #preprocess: node - children
-                                children = {}
-                                last = -1
-                                for node,children_ in zip(sucs.keys(),sucs.values()):
-                                    #print node,children_, last+1
-                                    #raw_input()
-                                    if node != last+1:
-                                        for i in range(last+1,node):
-                                            children[i] = []
-                                        children[node] = children_
-                                    elif node == last +1:
-                                        children[node] = children_
-                                    last = node
-                                
-                           #Todo: Shuffle
-                                
-                                shuffled = without_hold_out[1:]
-                                
-                                random.shuffle(shuffled)
-                                for node in shuffled:
-                                    parent = predecs.values()[node-1]
-                                    
-                                    w = update_weights(w,data,predecs,children,hold_out[minibatch],node, learning_rate)
-                        ww_ = []
-                        for w_ in weights_sample:
-                            ww_.append(w[w_])
-                        weights.append(ww_)
-                        first_run = False
-                                
-                                
-                        #compute average loss of hold out set
-                        loss__ = []
-                        for minibatch in range(0,2,1):
-                            print alphas, learning_rate, minibatch
-                            X_p, y_p, inv = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 1, 'training', c)                
-                            if X_p != []:
-                                #TODO: prune?
-                                boxes = []
-                                ground_truth = inv[0][2]
-                                img_nr = inv[0][0]
-                                if os.path.isfile('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt'):
-                                    f = open('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt', 'r')
-                                else:
-                                    print 'warning'
-                                for line, y in zip(f, inv):
-                                    tmp = line.split(',')
-                                    coord = []
-                                    for s in tmp:
-                                        coord.append(float(s))
-                                    boxes.append([coord, y[2]])
-                                assert(len(boxes)<500)
-                                boxes, y_p, X_p = sort_boxes(boxes, y_p, X_p, 0,500)
-                
-                                if os.path.isfile('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt'):
-                                    gr = open('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt', 'r')
-                                ground_truths = []
-                                for line in gr:
-                                   tmp = line.split(',')
-                                   ground_truth = []
-                                   for s in tmp:
-                                      ground_truth.append(int(s))
-                                   ground_truths.append(ground_truth)
-                
-                                # create_tree
-                                G, levels = create_tree(boxes)
-                                # normalize
-                                new_matrix = preprocessing.normalize(X_p, norm='l2', axis=0)
-                                multi_labels = []
-                                root = boxes[0]
-                                boxes_ = boxes[1:]
-                                for box, y,i_ in zip(boxes_, y_p[1:],range(1,len(boxes))):
-                                    if i_ in G.nodes():
-                                       parent = nx.dfs_predecessors(G,i_).values().index(i_)
-                                       parent_pred = y_p[parent]
-                                       for i, b_i in enumerate(levels.values()):
-                                          if any(x == parent for x in b_i):
-                                              level = i
-                                              break
-                                       previous_layer = count_per_level(boxes, ground_truths, levels[level])
-                                    else:
-                                       print len(new_matrix), i_
-                                       if i_ >= len(new_matrix):
-                                          new_matrix = new_matrix[0:-1]
-                                          y_p = y_p[0:-1]
-                                       else:
-                                          new_matrix = np.vstack((new_matrix[0:i_],new_matrix[i_+1:]))
-                                          y_p_temp = y_p[0:i_]
-                                          y_p_temp.append(y_p[i_+1:])
-                                          y_p = y_p_temp
-                  #              y_p = y_p[0:8]
-                  #              new_matrix = new_matrix[0:8]
-                                # always remove boxes of holdout set from trainingdata
-                                data = (G, levels, y_p, new_matrix, boxes, ground_truths, alphas)
-                                sucs = nx.dfs_successors(G)
-                                predecs = nx.dfs_predecessors(G)
-                                #preprocess: node - children
-                                children = {}
-                                last = -1
-                                #print sucs, predecs
-                                for node,children_ in zip(sucs.keys(),sucs.values()):
-                                    #print node, children_, predecs.values()[node-1]
-                                    #print node,children_, last+1
-                                    #raw_input()
-                                    if node != last+1:
-                                        for i in range(last+1,node):
-                                            children[i] = []
-                                        children[node] = children_
-                                    elif node == last +1:
-                                        children[node] = children_
-                                    last = node
-                                loss__.append(loss(w, data, predecs, children, hold_out[minibatch]))
-
-                        temp_label = [alphas[0],alphas[1],alphas[2],learning_rate]
-                        if tuple(temp_label) in loss_:
-                            loss_[alphas[0],alphas[1],alphas[2],learning_rate].append(sum(loss__)/len(loss__))
-                        else:
-                            loss_[alphas[0],alphas[1],alphas[2],learning_rate] = [sum(loss__)/len(loss__)]
+        for learning_rate0 in learning_rates:
+            learning_rate = learning_rate0
+            alphas = [alpha1,0,0]
+            w = np.zeros(4096)
+            change = -100000
+            for epoch in range(epochs):
+                print epoch, learning_rate
+                if learning_rate0 in learning_rates_:
+                    learning_rates_[learning_rate0].append(learning_rate)
+                else:
+                    learning_rates_[learning_rate0] = [learning_rate]
+                #shuffle images, not boxes!
+                shuffled = range(0,images)
+                random.shuffle(shuffled)
+                for minibatch in shuffled:
+                    w,t = minibatch_(w, [],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'train')
+                            
+                #update learning_rate
+                learning_rate = learning_rate0 * (1+learning_rate0*gamma*t)**-1
+                #compute average loss on training set
+                loss__ = []
+                for minibatch in range(0,images):
+                    loss__ = minibatch_(w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'test')
+                # save avg loss for plotting
+                temp_label = [alphas[0], learning_rate0]
+                llloss = sum(loss__)/len(loss__)
+                if tuple(temp_label) in loss_:
+                    change = llloss - loss_[alphas[0], learning_rate0][-1]
+                    print 'avg', llloss, ' change: ',  change
+                if tuple(temp_label) in loss_:
+                    loss_[alphas[0], learning_rate0].append(sum(loss__)/len(loss__))
+                else:
+                    loss_[alphas[0], learning_rate0] = [sum(loss__)/len(loss__)]                          
+                          
+                # save sample weights for plotting
+                ww_ = []
+                for w_ in weights_sample:
+                    ww_.append(w[w_])
+                temp_label = [alphas[0],learning_rate0]
+                if tuple(temp_label) in weights_visualization:
+                    weights_visualization[alphas[0],learning_rate0].append(ww_)
+                else:
+                    weights_visualization[alphas[0],learning_rate0] = [ww_]
+                    
+                #TODO: update learning rate
+            
+            
+            
+            #save final weights
+            weights[alphas[0], learning_rate0] = w
+                        
+    final_model_losses = [x[-1] for x in loss_.values()]
+    best_model_index = final_model_losses.index(min(final_model_losses))
+    a1, learning_rate_0 = loss_.keys()[best_model_index]
+    print a1, learning_rate_0
+    w_best = weights[a1, learning_rate_0]
     #plot
-    for i,l in enumerate(loss_):
-        to_plot = [math.log(a[0][0]) for a in loss_[l]]
-        plt.plot(range(len(loss_[l])),to_plot,'-', label=learning_rate)
+    for i,l in zip(loss_.keys(),loss_.values()):
+        to_plot = [math.log(a) for a in loss_[i]]
+        labl = "alpha1=%s"%i[0]
+        plt.plot(range(len(loss_[i])),to_plot,'-', label=labl)
+        plt.title('Learning rate=%s'%learning_rate_0)
     plt.xlabel('Iterations')
     plt.ylabel('Log(Loss)')
-    plt.savefig('/home/stahl/sgd_models_after.png')
+    plt.legend()
+    plt.savefig('/home/stahl/debugwithalphas.png')
+    
+    plt.figure()
+    for l in learning_rates_:
+        plt.plot(range(len(learning_rates_[l])),learning_rates_[l],label='start=%s'%l)
+    plt.xlabel('Iterations')
+    plt.ylabel('Learning rate')
+    plt.legend()
+    plt.savefig('/home/stahl/learning_ratewithalphas.png')
+    
     plt.figure()
     for in_ in range(len(weights_sample)):
-        refactor = [weights[x][in_] for x in range(len(weights))]
-        print in_, refactor
+        refactor = [weights_visualization[a1,learning_rate_0][x][in_] for x in range(len(weights_visualization[a1,learning_rate_0]))]
         plt.plot(range(len(refactor)),refactor,'-')
     plt.xlabel('Iterations')
     plt.ylabel('Weights')
-    plt.savefig('/home/stahl/weights_after.png')
+    plt.savefig('/home/stahl/best_weights_pruned_withalphas.png')
     print "model learned"
-    with open('/home/stahl/Models/'+class_+c+'normalized_constrained.pickle', 'wb') as handle:
-        pickle.dump(w, handle)
+    with open('/home/stahl/Models/'+class_+c+'normalized_constrained_best.pickle', 'wb') as handle:
+        pickle.dump(w_best, handle)
         
-
+    sys.exit("Error message")
     #TODO: compute average loss test set using best configuration on hold out set
     loss__ = []
     for minibatch in range(0,100,1):
@@ -383,18 +382,15 @@ def main():
             G, levels = create_tree(boxes)
             # normalize
             new_matrix = preprocessing.normalize(X_p, norm='l2', axis=0)
-            multi_labels = []
             root = boxes[0]
             boxes_ = boxes[1:]
             for box, y,i_ in zip(boxes_, y_p[1:],range(1,len(boxes))):
                 if i_ in G.nodes():
                    parent = nx.dfs_predecessors(G,i_).values().index(i_)
-                   parent_pred = y_p[parent]
                    for i, b_i in enumerate(levels.values()):
                       if any(x == parent for x in b_i):
                           level = i
                           break
-                   previous_layer = count_per_level(boxes, ground_truths, levels[level])
                 else:
                    print len(new_matrix), i_
                    if i_ >= len(new_matrix):

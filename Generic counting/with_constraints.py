@@ -27,14 +27,17 @@ from get_intersection_count import get_intersection_count
 from scipy import optimize
 import time
 import cProfile
+from sklearn.preprocessing import StandardScaler,MinMaxScaler
 
 class_ = 'sheep'
 baseline = False
 add_window_size = False
-iterations = 0
-subsampling = True
+iterations = 1000
+subsampling = False
 c = 'partial'
-normalize = False
+normalize = True
+prune = False
+delta = math.pow(10,-3)
 
 class bcolors:
     HEADER = '\033[95m'
@@ -63,93 +66,93 @@ def find_children(sucs, parent):
     
     return children
 
-def loss(w, data, predecs, children):
+def loss(w, data, predecs, children,img_nr, only_single):
     
     G, levels, y_p, x, boxes, ground_truths, alphas = data
     parent_child = 0.0
     layers = 0.0
-    for node in list(G.nodes())[1:]:
+    preds = np.dot(w,np.array(x).T)
+    previous_layers = {}
+    if only_single != -1:
+        nodes = [only_single]
+        y_selection = y_p[only_single]
+        x_selection = x[only_single]
+    else:
+        nodes = list(G.nodes())[1:]
+        y_selection = y_p
+        x_selection = x
+    for node in nodes:
         parent = predecs.values()[node-1]
         parent_pred = np.dot(w,x[parent])
         child_pred = np.dot(w,x[node])
-        parent_child += child_pred - parent_pred if child_pred > parent_pred else 0
-        children_layer = count_per_level(boxes, ground_truths, children[parent])
+        parent_child += (child_pred - parent_pred) if child_pred > parent_pred else 0
+        if alphas[3] != 0:
+            if parent in previous_layers.keys():
+                children_layer = previous_layers[parent]
+            else:
+                children_layer = count_per_level_pred(w,preds,img_nr, boxes, children[parent])
+                previous_layers[parent] = children_layer
+        else:
+            children_layer = 0
         layers += children_layer - parent_pred if children_layer > parent_pred else 0
-    ret = ((y_p - np.dot(w,np.array(x).T)) ** 2).sum() + alphas[0] * np.dot(w.reshape(1,4096),w.reshape(4096,1)) + alphas[1] * parent_child + alphas[2] * layers
+    ret = alphas[0] * ((y_selection - np.dot(w,np.array(x_selection).T)) ** 2).sum() + alphas[1] * np.dot(w,w) + alphas[2] * parent_child + alphas[3] * layers
     return ret
-   
-def loss_simple(w,data):
-    y_p = data[2]
-    x = data[3]
-    alpha1 = data[6][0]
-    y_p = y_p[1:]
-    x = x[1:]
-    return ((y_p - np.dot(w,np.array(x).T)) ** 2).sum() + alpha1 * np.dot(w.reshape(1,4096),w.reshape(4096,1))
 
-def loss_prime(w,data,predecs,children,node,feature):
-    G, levels, y, x, boxes, ground_truths, alphas = data
-    if len(x) <= node:
-        print len(x), node
-    x_f = x[node][feature]
-    y_node = y[node]
-    parent = predecs.values()[node-1]
-    parent_pred = y[parent]
-    child_pred = y[node]
-    parent_child = 0
-    if child_pred > parent_pred:
-        parent_child = x_f
-    #children = find_children(sucs, parent)
-    children_layer = count_per_level(boxes, ground_truths, children[parent])
-    layers = 0
-    if children_layer > parent_pred:
-        layers = x_f
-    
-    window_error = (y_node - w[feature] * x_f) *(x_f) 
-    alpha_weights = alphas[0] * w[feature]
-    first_constraint = alphas[1] * parent_child
-    second_constrained = alphas[2] * layers * np.sign(x_f * w[feature])
-    if alphas[1] == 0 and alphas[2] == 0:
-        assert first_constraint == 0 and second_constrained == 0, "constraints not zero, despite alphas are"
-    ret = window_error + alpha_weights + first_constraint + second_constrained
-    return ret
-    
-def loss_prime_simple(w,node,feature,data):
-    x = data[3]
-    y = data[2]
-    alpha1 = data[6][0]
-    x_f = x[node][feature]    
-    y_node = y[node]
-    if feature == 10:
-        print w[feature], x_f, w[feature] * x_f, (y_node - w[feature] * x_f) * (x_f)
-    ret = (y_node - w[feature] * x_f) * (x_f)
-    return ret + alpha1 * w[feature]
+def learn_root(w,x,y,learning_rate):
+    inner_prod = 0.0
+    for f_ in range(len(x)):
+        inner_prod += (w[f_] * x[f_])
+    dloss = inner_prod - y
+    for f_ in range(len(x)):
+        w[f_] += (learning_rate * ((-x[f_] * dloss)))
+    return w
 
-def update_weights(w,data,predecs,children,node, learning_rate):
-    len_features = len(data[3][0])
-    w_new = np.zeros(len_features)
-    for feature_ in range(len_features):
-        w_new[feature_] = loss_prime_simple(w,node,feature_,data)
-    return w + learning_rate * w_new
     
-def like_scikit(w,x,y,node,predecs,children,learning_rate,alphas):
-    inner_product = 0.0
+def like_scikit(w,x,y,node,predecs,children,boxes,learning_rate,alphas,img_nr):
     x_node = x[node]
     y_node = y[node]
-    for f_ in range(len(x)):
-        inner_product += (w[f_] * x_node[f_])
-    dloss = inner_product - y_node
+    dloss = np.dot(w,x_node) - y_node
     parent = predecs.values()[node-1]
     parent_pred = np.dot(w,x[parent])
     child_pred = np.dot(w,x[node])
+    preds = np.dot(w,np.array(x).T)
+    if alphas[3] == 0:
+        children_layer = 0
+    else:
+        children_layer = count_per_level_pred(w,preds,img_nr, boxes, children[parent])
     for f_ in range(len(x)):
         parent_child = 0
         if child_pred > parent_pred:
-            parent_child = x_node[f_]
-        w[f_] += (learning_rate * ((-x_node[f_] * dloss) + alphas[0] * w[f_] + alphas[1] * parent_child))
+            parent_child = (-x_node[f_] + x[parent][f_])
+        layers_cons = 0
+        if children_layer > parent_pred:
+            layers_cons = x_node[f_]
+        w[f_] += (learning_rate * (alphas[0]*(-x_node[f_] * dloss) + alphas[1] * w[f_] + alphas[2] * parent_child + alphas[3] * layers_cons))
     return w
+    
+
+def gradient(w,x,y,node,predecs,children,boxes,alphas,img_nr,f_):
+    x_node = x[node]
+    y_node = y[node]
+    dloss = np.dot(w,x_node) - y_node
+    parent = predecs.values()[node-1]
+    parent_pred = np.dot(w,x[parent])
+    child_pred = np.dot(w,x[node])
+    preds = np.dot(w,np.array(x).T)
+    if alphas[3] == 0:
+        children_layer = 0
+    else:
+        children_layer = count_per_level_pred(w,preds,img_nr, boxes, children[parent])
+    parent_child = 0
+    if child_pred > parent_pred:
+        parent_child = x_node[f_]
+    layers_cons = 0
+    if children_layer > parent_pred:
+        layers_cons = x_node[f_]
+    return ((-x_node[f_] * dloss) + 2*alphas[0] * w[f_] + alphas[1] * parent_child + alphas[2] * layers_cons)
 
 
-def minibatch_(clf,w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, mode):
+def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, mode):
     if mode == 'loss_test' or mode == 'loss_scikit_test':
         X_p, y_p, inv = get_data(class_, test_imgs, train_imgs, minibatch, minibatch + 1, 'test', c)                
     else:
@@ -185,11 +188,16 @@ def minibatch_(clf,w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatc
         pruned_x = []
         pruned_y = []
         pruned_boxes = []
-        for i, y_ in enumerate(y_p):
-            if y_ > 0:
-                pruned_x.append(X_p[i])
-                pruned_y.append(y_p[i])
-                pruned_boxes.append(boxes[i])
+        if prune:
+            for i, y_ in enumerate(y_p):
+                if y_ > 0:
+                    pruned_x.append(X_p[i])
+                    pruned_y.append(y_p[i])
+                    pruned_boxes.append(boxes[i])
+        else:
+            pruned_x = X_p
+            pruned_y = y_p
+            pruned_boxes = boxes
         
         if subsampling and pruned_boxes > subsamples:
             pruned_x = pruned_x[0:subsamples]
@@ -200,7 +208,8 @@ def minibatch_(clf,w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatc
             sum_x += np.array(pruned_x).sum(axis=0)
             n_samples += len(pruned_x)
             sum_sq_x +=  (np.array(pruned_x)**2).sum(axis=0)
-            return sum_x,n_samples,sum_sq_x
+            scaler.partial_fit(pruned_x)  # Don't cheat - fit only on training data
+            return sum_x,n_samples,sum_sq_x, scaler
             
         # create_tree
         G, levels = create_tree(pruned_boxes)
@@ -208,8 +217,9 @@ def minibatch_(clf,w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatc
         #normalize
         norm_x = []
         if normalize:
-            for p_x in pruned_x:
-                norm_x.append((p_x-mean)/variance)
+#            for p_x in pruned_x:
+#                norm_x.append((p_x-mean)/variance)
+            norm_x = scaler.transform(pruned_x)
         else:
             norm_x = pruned_x
         data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, alphas)
@@ -231,18 +241,50 @@ def minibatch_(clf,w, loss__,alphas,learning_rate,test_imgs, train_imgs,minibatc
         if mode == 'train':
             nodes = list(G.nodes())[1:]
             for node in nodes:
-                w = like_scikit(w,norm_x,pruned_y,node,predecs,children,learning_rate,alphas)
+                if node == 0:
+                    w = learn_root(w,norm_x[0],pruned_y[0],learning_rate)
+                else:
+                    w = like_scikit(w,norm_x,pruned_y,node,predecs,children,pruned_boxes,learning_rate,alphas,img_nr)
                 #w = update_weights(w,data,predecs,children,node, learning_rate)
             return w, len(pruned_y)
         elif mode == 'scikit_train':
             clf.partial_fit(norm_x,pruned_y)
             return clf
         elif mode == 'loss_train' or mode == 'loss_test':
-            loss__.append(loss(w, data, predecs, children))
-            return loss__
+            loss__.append(loss(w, data, predecs, children,img_nr,-1))
+            mse.append(((data[2] - np.dot(w,np.array(data[3]).T)) ** 2).sum())
+            a2 = alphas[2]
+            data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, [0,0,a2,0])
+            hinge1.append(loss(w, data, predecs, children,img_nr,-1))
+            a3 = alphas[3]
+            data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, [0,0,0,a3])
+            hinge2.append(loss(w, data, predecs, children,img_nr,-1))
+            data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, [1,0,0,0])
+            full_image.append(loss(w,data,predecs, children, img_nr,5))
+            return loss__, mse,hinge1,hinge2,full_image
         elif mode == 'loss_scikit_test' or mode == 'loss_scikit_train':
             loss__.append(((clf.predict(norm_x) - pruned_y)**2).sum())
             return loss__ 
+        elif mode == 'finite_differences':
+            feature = random.sample(range(4096),1)[0]
+            #1. Pick an example z.
+            example = random.sample(range(len(norm_x[1:])),1)[0]
+            #2. Compute the loss Q(z, w) for the current w.
+            Q = loss(w,data, predecs, children,img_nr,example)
+            #3. Compute the gradient g = ∇w Q(z, w).
+            g = gradient(w,norm_x,pruned_y,example,predecs,children,boxes,alphas,img_nr,feature)
+            #4. Apply a slight perturbation w0 = w +δ. For instance, change a single weight
+            #by a small increment, or use δ = −γg with γ small enough.
+            w0 = w
+            w0[feature] = w0[feature] + delta
+            #5. Compute the new loss Q(z, w0
+            #) and verify that Q(z, w0) ≈ Q(z, w) + δg
+            # Q(z, w + delta*e_i) ≈ ( Q(z, w) + delta * g_i )
+            Q_ = loss(w0,data, predecs, children,img_nr,example)
+            #print Q,Q_,g
+            #print abs(Q_ - Q+(delta*g)) < 0.001
+            #raw_input()
+            
         
             
 def main():
@@ -253,96 +295,139 @@ def main():
 #            w = pickle.load(handle)
 #    else:
     weights = {}
+    losses = {}
     gamma = 0.1
     epochs = 25
-    images = 20
-    subsamples = 40
+    images = 1
+    subsamples = 20
     weights_visualization = {}
-    learning_rates = [math.pow(10,-6),math.pow(10,-7),math.pow(10,-8)]#,math.pow(10,-7)]
+    learning_rates = [math.pow(10,-4)]
     learning_rates_ = {}
     weights_sample = random.sample(range(4096), 10)
-    all_alphas = [math.pow(10,-2),math.pow(10,-3),math.pow(10,-4)]#,math.pow(10,-6),math.pow(10,-7)]
+    all_alphas = [math.pow(10,1)]#,math.pow(10,0),math.pow(10,-1)]#,math.pow(10,-6),math.pow(10,-7)]
     sum_x = np.zeros(4096)
     n_samples = 0.0
     sum_sq_x = np.zeros(4096)
     plt.figure()
     mean = []
     variance = []
+    scaler = []
+    shuffled = range(0,images)
     #normalize
     if normalize:
+        scaler = MinMaxScaler()
         for minibatch in range(0,images):
-            sum_x,n_samples,sum_sq_x = minibatch_(None,[], [],[],[],test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,None,None,'mean_variance')
+            sum_x,n_samples,sum_sq_x,scaler = minibatch_(None,scaler,[], [],[],[],[],[],[],[],test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,None,None,'mean_variance')
         mean = sum_x/n_samples
-        variance = (sum_sq_x - (sum_x * sum_x) / n_samples) / (n_samples - 1)
-    for alpha1 in all_alphas:
-        for alpha2 in all_alphas:
-            for learning_rate0 in learning_rates:
-                learning_rate = learning_rate0
-                alphas = [alpha1,alpha2,0]
-                w = np.zeros(4096)
-                loss_train = []
-                loss_test = []
-                for epoch in range(epochs):
-                    print epoch, learning_rate
-                    if learning_rate0 in learning_rates_:
-                        learning_rates_[learning_rate0].append(learning_rate)
-                    else:
-                        learning_rates_[learning_rate0] = [learning_rate]
-                    #shuffle images, not boxes!
-                    shuffled = range(0,images)
-                    random.shuffle(shuffled)
-                    for minibatch in shuffled:
-                        w,t = minibatch_(None,w, [],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'train')
-                        #clf = minibatch_(clf,None, [],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'scikit_train')
-                                
-                    #update learning_rate
-                    learning_rate = learning_rate0 * (1+learning_rate0*gamma*t)**-1
-                    #compute average loss on training set
-                    loss__train = []
-                    for minibatch in range(0,images):
-                        loss__train = minibatch_(None,w, loss__train,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_train')
-                        #loss__scikit_train = minibatch_(clf,None, loss__scikit_train,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_scikit_train')
-                    #compute average loss on test set
-                    loss__test = []
-                    for minibatch in range(0,images):
-                        loss__test = minibatch_(None,w, loss__test,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_test')
-                        #loss__scikit_test = minibatch_(clf,None, loss__scikit_test,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_scikit_test')
-                    # save avg loss for plotting
-                    temp_label = [alphas[0],alphas[1], learning_rate0]
-                    loss_train.append(sum(loss__train)/len(loss__train))
-                    loss_test.append(sum(loss__test)/len(loss__test))
-                    # save sample weights for plotting
-                    ww_ = []
-                    for w_ in weights_sample:
-                        ww_.append(w[w_])
-                    temp_label = [alphas[0],alphas[1],learning_rate0]
-                    if tuple(temp_label) in weights_visualization:
-                        weights_visualization[alphas[0],alphas[1],learning_rate0].append(ww_)
-                    else:
-                        weights_visualization[alphas[0],alphas[1],learning_rate0] = [ww_]
-                        
-                
-                #save final weights
-                weights[alphas[0],alphas[1], learning_rate0] = w
-                #plot
-                plt.ylabel('Loss')
-                plt.xlabel('Iterations')
-                plt.plot([f[0][0] for f in loss_test], label='test set')
-                plt.plot([f[0][0] for f in loss_train], label='train set')
-                plt.title('%s,%s,%s'%(learning_rate0, alphas[1],alphas[2]))
-                plt.legend( loc='upper left', numpoints = 1 )
-                plt.savefig('/home/stahl/losstraintest%s_%s_%s.png'%(learning_rate0, alphas[1],alphas[2]))
-                plt.clf()
-                        
-    final_model_losses = [x[-1] for x in loss_test.values()]
-    best_model_index = final_model_losses.index(min(final_model_losses))
-    a1,a2, learning_rate_0 = loss_test.keys()[best_model_index]
-    print a1,a2, learning_rate_0
-    w_best = weights[a1,a2, learning_rate_0]
+        variance = (sum_sq_x - (sum_x * sum_x) / n_samples) / (n_samples)
+    
+    #check gradients using finite differences check
+    for minibatch in shuffled:
+        #w = np.random.rand(4096)
+        w = np.zeros(4096)
+        differences = minibatch_(None,scaler,w, [],[],[],[],[],[0,0,0,0],[],test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'finite_differences')
+        
+        
+    for alpha2 in all_alphas:
+        for learning_rate0 in learning_rates:
+            learning_rate = learning_rate0
+            alphas = [1,1,alpha2,0]
+            w = 0.001 * np.random.rand(4096)
+            loss_train = []
+            loss_test = []
+            mse_test = []
+            mse_train = []
+            hinge1_train = []
+            hinge1_test = []
+            hinge2_train = []
+            hinge2_test = []
+            full_image_test = []
+            full_image_train = []
+            for epoch in range(epochs):
+                print epoch, learning_rate, alphas
+                if learning_rate0 in learning_rates_:
+                    learning_rates_[learning_rate0].append(learning_rate)
+                else:
+                    learning_rates_[learning_rate0] = [learning_rate]
+                #shuffle images, not boxes!
+                random.shuffle(shuffled)
+                for minibatch in shuffled:
+                    w,t = minibatch_(None,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'train')
+                    #clf = minibatch_(clf,None, [],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'scikit_train')
+                            
+                #update learning_rate
+                learning_rate = learning_rate0 * (1+learning_rate0*gamma*t)**-1
+                #compute average loss on training set
+                loss__train = []
+                mse__train = []
+                hinge1__train = []
+                hinge2__train = []
+                full_image__train = []
+                for minibatch in range(0,images):
+                    loss__train,mse__train,hinge1__train,hinge2__train,full_image__train = minibatch_(None,scaler,w, loss__train,mse__train,hinge1__train,hinge2__train,full_image__train,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_train')
+                    #loss__scikit_train = minibatch_(clf,None, loss__scikit_train,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_scikit_train')
+                #compute average loss on test set
+                loss__test = []
+                mse__test = []
+                hinge1__test = []
+                hinge2__test = []
+                full_image__test = []
+                for minibatch in range(0,images):
+                    loss__test,mse__test,hinge1__test,hinge2__test,full_image__test = minibatch_(None,scaler,w, loss__test,mse__test,hinge1__test,hinge2__test,full_image__test,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_test')
+                    #loss__scikit_test = minibatch_(clf,None, loss__scikit_test,alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance,'loss_scikit_test')
+                # save avg loss for plotting
+                temp_label = [alphas[0],alphas[1],alphas[2],alphas[3], learning_rate0]
+                loss_train.append(sum(loss__train)/len(loss__train))
+                loss_test.append(sum(loss__test)/len(loss__test))
+                mse_train.append(sum(mse__train)/len(mse__train))
+                mse_test.append(sum(mse__test)/len(mse__test))
+                hinge1_train.append(sum(hinge1__train)/len(hinge1__train))
+                hinge1_test.append(sum(hinge1__test)/len(hinge1__test))
+                hinge2_train.append(sum(hinge2__train)/len(hinge2__train))
+                hinge2_test.append(sum(hinge2__test)/len(hinge2__test))
+                full_image_train.append(sum(full_image__train)/len(full_image__train))
+                full_image_test.append(sum(full_image__test)/len(full_image__test))
+                print sum(loss__train)/len(loss__train), sum(loss__test)/len(loss__test), sum(mse__train)/len(mse__train), sum(mse__test)/len(mse__test)
+                # save sample weights for plotting
+                ww_ = []
+                for w_ in weights_sample:
+                    ww_.append(w[w_])
+                if tuple(temp_label) in weights_visualization:
+                    weights_visualization[alphas[0],alphas[1],alphas[2],alphas[3],learning_rate0].append(ww_)
+                else:
+                    weights_visualization[alphas[0],alphas[1],alphas[2],alphas[3],learning_rate0] = [ww_]
+                    
+            
+            #save final weights
+            weights[alphas[0],alphas[1],alphas[2],alphas[3], learning_rate0] = w
+            losses[alphas[0],alphas[1],alphas[2],alphas[3],learning_rate0] = loss_test[-1]
+            #plot
+            plt.ylabel('Loss')
+            plt.xlabel('Iterations')
+            plt.plot(loss_test, 'ro',label='test set')
+            plt.plot(loss_train,'rx', label='train set')
+            plt.plot(mse_train,'go', label='mse train set')
+            plt.plot(mse_test,'gx', label='mse test set')
+            plt.plot(hinge1_train,'yo', label='hinge1 train set')
+            plt.plot(hinge1_test,'yx', label='hinge1 test set')
+            plt.plot(hinge2_train,'bo', label='hinge2 train set')
+            plt.plot(hinge2_test,'bx', label='hinge2 test set')
+            plt.plot(full_image_train,'mo', label='full image train set')
+            plt.plot(full_image_test,'mx', label='full image test set')
+            plt.title('%s,%s,%s,%s,%s'%(learning_rate0,alphas[0], alphas[1],alphas[2],alphas[3]))
+            plt.legend( loc='upper left', numpoints = 1 )
+            plt.savefig('/home/stahl/all_images%s_%s_%s_%s_%s.png'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]))
+            plt.clf()
+    print losses.values()
+    #final_model_losses = [x[-1] for x in losses.values()]
+    #best_model_index = final_model_losses.index(min(final_model_losses))
+    #a0,a1,a2,a3, learning_rate_0 = losses.keys()[best_model_index]
+    #print a0,a1,a2,a3, learning_rate_0
+    #w_best = weights[a0,a1,a2,a3, learning_rate_0]
     
     print "model learned"
-    with open('/home/stahl/Models/'+class_+c+'normalized_constr11ained_best.pickle', 'wb') as handle:
-        pickle.dump(w_best, handle)
+    #with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'wb') as handle:
+    #    pickle.dump(w_best, handle)
 
 def create_tree(boxes):
     G = nx.Graph()
@@ -398,58 +483,6 @@ def count_per_level(boxes, ground_truths, boxes_level):
 #    print boxes_level, len(boxes)
     for i in boxes_level:
 #        print i
-        level_boxes.append(boxes[i][0])
-        
-    combinations = list(itertools.combinations(boxes_level, 2)) 
-    G = nx.Graph()
-    
-    G.add_edges_from(combinations)
-    
-    for comb in combinations:
-        set_ = []
-        for c in comb:
-            set_.append(boxes[c][0])
-        I = get_set_intersection(set_)
-        if I == []:
-            G.remove_edges_from([comb])
-    
-    for u in G:
-        index[u] = len(index)
-        # Neighbors of u that appear after u in the iteration order of G.
-        nbrs[u] = {v for v in G[u] if v not in index}
-
-    queue = deque(([u], sorted(nbrs[u], key=index.__getitem__)) for u in G)
-    # Loop invariants:
-    # 1. len(base) is nondecreasing.
-    # 2. (base + cnbrs) is sorted with respect to the iteration order of G.
-    # 3. cnbrs is a set of common neighbors of nodes in base.
-    while queue:
-        base, cnbrs = map(list, queue.popleft())
-        I = [0,0,1000,1000]
-        for c in base:
-            I = get_intersection(boxes[c][0], I)
-        if len(base)%2==1:
-            count_per_level += get_intersection_count(I, ground_truths)
-        elif len(base)%2==0:
-            count_per_level -= get_intersection_count(I, ground_truths)
-                
-        for i, u in enumerate(cnbrs):
-            # Use generators to reduce memory consumption.
-            queue.append((chain(base, [u]),
-                          filter(nbrs[u].__contains__,
-                                 islice(cnbrs, i + 1, None))))     
-            
-    return count_per_level
-    
-    
-def count_per_level_pred(boxes, ground_truths, boxes_level):
-    if len(boxes_level) == 1:
-        return boxes[boxes_level[0]][1]
-    count_per_level = 0
-    level_boxes = []
-    index = {}
-    nbrs = {}
-    for i in boxes_level:
         level_boxes.append(boxes[i][0])
         
     combinations = list(itertools.combinations(boxes_level, 2)) 
@@ -677,7 +710,120 @@ def get_hyper_features(A, B):
         surface_union = surface_A + surface_B - surface_intersection
         return surface_intersection / surface_union, surface_intersection / surface_A, surface_intersection / surface_B
         
+def count_per_level_pred(w,preds,img, boxes, boxes_level):
+    sums = np.zeros(len(boxes_level))
+    if len(boxes_level) == 1:
+        return preds[boxes_level[0]]
+    level_boxes = []
+    for i in boxes_level:
+        level_boxes.append(boxes[i][0])
+        
+    combinations = list(itertools.combinations(boxes_level, 2)) 
+    G = nx.Graph()
     
+    G.add_edges_from(combinations)
+    
+    for comb in combinations:
+        set_ = []
+        for c in comb:
+            set_.append(boxes[c][0])
+        I = get_set_intersection(set_)
+        if I == []:
+            G.remove_edges_from([comb])
+    
+    sums = sums_of_all_cliques(w, G, preds, boxes, sums, img)
+    return iep(sums)
+    
+    
+def iep(sums):
+    ret = 0
+    for summe, ij in zip(sums, range(len(sums))):
+        if ij % 2 == 0:
+            ret += summe
+        else:
+            ret -= summe
+    return ret
+    
+    
+def sums_of_all_cliques(w, G, preds, boxes, sums, img_nr):
+    feat_exist = False
+    real_b = [b[0] for b in boxes]
+    write_coords = []
+    length = 1
+    index = {}
+    nbrs = {}
+    coords = []
+    features = []
+    if os.path.isfile('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt'):
+        f_c = open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt', 'r+')
+        for i,line in enumerate(f_c):
+            str_ = line.rstrip('\n').split(',')
+            cc = []
+            for s in str_:
+               cc.append(float(s))
+            coords.append(cc)
+    else:
+        f_c = open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt', 'w+')
+
+    if os.path.isfile('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt'):
+        f = open('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt', 'r') 
+        feat_exist = True
+        for i,line in enumerate(f):
+            str_ = line.rstrip('\n').split(',')  
+            ff = []
+            for s in str_:
+               ff.append(float(s))
+            features.append(ff)
+    else:
+        print '/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt doesnt exist'
+
+    for u in G:
+        index[u] = len(index)
+        # Neighbors of u that appear after u in the iteration order of G.
+        nbrs[u] = {v for v in G[u] if v not in index}
+
+    queue = deque(([u], sorted(nbrs[u], key=index.__getitem__)) for u in G)
+    # Loop invariants:
+    # 1. len(base) is nondecreasing.
+    # 2. (base + cnbrs) is sorted with respect to the iteration order of G.
+    # 3. cnbrs is a set of common neighbors of nodes in base.
+    while queue:
+        base, cnbrs = map(list, queue.popleft())
+        if len(base) > length:
+            length = len(base)
+        I = [0,0,1000,1000]
+        for c in base:
+          if I != []:
+            I = get_intersection(boxes[c][0], I)
+        if I != []:
+          if I in real_b:
+             ind = real_b.index(I)
+             sums[len(base)-1] += preds[ind]
+          else:
+             if feat_exist == True:
+                if I in coords and I != []:
+                  ind = coords.index(I)
+                  sums[len(base)-1] += np.dot(w,features[ind])
+                else:
+                   print 'not found', I
+                   
+             else:
+                if I not in coords and I not in write_coords:
+                     write_coords.append(I)
+        for i, u in enumerate(cnbrs):
+            # Use generators to reduce memory consumption.
+            queue.append((chain(base, [u]),
+                          filter(nbrs[u].__contains__,
+                                 islice(cnbrs, i + 1, None))))
+
+    if feat_exist == False:
+       print 'write coords', len(write_coords)
+       for coor in write_coords:
+          f_c.seek(0,2)
+          f_c.write(str(coor[0])+','+str(coor[1])+','+str(coor[2])+','+str(coor[3]))
+          f_c.write('\n')
+    return sums
+
     
 if __name__ == "__main__":
 #    cProfile.run('main()')

@@ -16,6 +16,7 @@ import numpy
 import math
 import sys
 import random
+import pylab as pl
 import networkx as nx
 import pyximport; pyximport.install(pyimport = True)
 import get_overlap_ratio
@@ -24,10 +25,14 @@ from get_intersection import get_intersection
 from collections import deque
 from itertools import chain, islice
 from get_intersection_count import get_intersection_count
+import matplotlib.colors as colors
+import matplotlib.image as mpimg
+import matplotlib.cm as cmx
 from scipy import optimize
 import time
 import cProfile
 from sklearn.preprocessing import StandardScaler,MinMaxScaler
+from matplotlib.patches import Rectangle
 
 class_ = 'sheep'
 baseline = False
@@ -38,6 +43,8 @@ c = 'partial'
 normalize = True
 prune = False
 delta = math.pow(10,-3)
+features_used = 5
+less_features = False
 
 class bcolors:
     HEADER = '\033[95m'
@@ -66,7 +73,7 @@ def find_children(sucs, parent):
     
     return children
 
-def loss(w, data, predecs, children,img_nr, only_single):
+def loss(scaler,w, data, predecs, children,img_nr, only_single):
     
     G, levels, y_p, x, boxes, ground_truths, alphas = data
     parent_child = 0.0
@@ -90,7 +97,7 @@ def loss(w, data, predecs, children,img_nr, only_single):
             if parent in previous_layers.keys():
                 children_layer = previous_layers[parent]
             else:
-                children_layer = count_per_level(w,preds,img_nr, boxes, children[parent], '')
+                children_layer,_ = count_per_level(scaler,w,preds,img_nr, boxes, children[parent], '')
                 previous_layers[parent] = children_layer
         else:
             children_layer = 0
@@ -108,7 +115,7 @@ def learn_root(w,x,y,learning_rate,alphas):
     return w
 
     
-def like_scikit(w,x,y,node,predecs,children,boxes,learning_rate,alphas,img_nr):
+def like_scikit(scaler,w,x,y,node,predecs,children,boxes,learning_rate,alphas,img_nr):
     x_node = x[node]
     y_node = y[node]
     inner_prod = 0.0
@@ -121,6 +128,8 @@ def like_scikit(w,x,y,node,predecs,children,boxes,learning_rate,alphas,img_nr):
     parent_pred = np.dot(w,x[parent])
     child_pred = np.dot(w,x[node])
     preds = np.dot(w,np.array(x).T)
+    children_layer = 0
+    learn_second_constraint = True
     for f_ in range(len(w)):
         parent_child = 0
         parent_pred = np.dot(w,x[parent])
@@ -131,10 +140,13 @@ def like_scikit(w,x,y,node,predecs,children,boxes,learning_rate,alphas,img_nr):
         if alphas[3] == 0:
             children_layer = 0
         else:
-            children_layer = count_per_level(w,preds,img_nr, boxes, children[parent], '')
-            print f_, children_layer, parent_pred
+            if learn_second_constraint:
+                children_layer, _ = count_per_level(scaler,w,preds,img_nr, boxes, children[parent], '')
+            #print 'lsk ', f_, children_layer, parent_pred, boxes[node][1], boxes[parent][1], learn_second_constraint
             if children_layer > parent_pred:
-                layers_cons = train_per_level(x,node,img_nr, boxes, children[parent], parent, f_)
+                layers_cons = train_per_level(scaler, x,node,img_nr, boxes, children[parent], parent, f_)
+            else:
+                learn_second_constraint = False
         w[f_] += (learning_rate * (alphas[0]*(-x_node[f_] * dloss) + alphas[1] * w[f_] + alphas[2] * parent_child + alphas[3] * layers_cons))
     return w
     
@@ -169,6 +181,8 @@ def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning
         boxes = []
         ground_truth = inv[0][2]
         img_nr = inv[0][0]
+        if less_features:
+            X_p = [fts[0:features_used] for fts in X_p]
         if os.path.isfile('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt'):
             f = open('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt', 'r')
         else:
@@ -253,20 +267,20 @@ def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning
                 if node == 0:
                     w = learn_root(w,norm_x[0],pruned_y[0],learning_rate,alphas)
                 else:
-                    w = like_scikit(w,norm_x,pruned_y,node,predecs,children,pruned_boxes,learning_rate,alphas,img_nr)
+                    w = like_scikit(scaler,w,norm_x,pruned_y,node,predecs,children,pruned_boxes,learning_rate,alphas,img_nr)
             return w, len(pruned_y)
         elif mode == 'scikit_train':
             clf.partial_fit(norm_x,pruned_y)
             return clf
         elif mode == 'loss_train' or mode == 'loss_test':
-            loss__.append(loss(w, data, predecs, children,img_nr,-1))
+            loss__.append(loss(scaler, w, data, predecs, children,img_nr,-1))
             mse.append(((data[2] - np.dot(w,np.array(data[3]).T)) ** 2).sum())
             a2 = alphas[2]
             data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, [0,0,a2,0])
-            hinge1.append(loss(w, data, predecs, children,img_nr,-1))
+            hinge1.append(loss(scaler, w, data, predecs, children,img_nr,-1))
             a3 = alphas[3]
             data = (G, levels, pruned_y, norm_x, pruned_boxes, ground_truths, [0,0,0,a3])
-            hinge2.append(loss(w, data, predecs, children,img_nr,-1))
+            hinge2.append(loss(scaler, w, data, predecs, children,img_nr,-1))
             full_image.append([pruned_y[0],np.dot(w,np.array(norm_x[0]).T)])
             return loss__, mse,hinge1,hinge2,full_image
         elif mode == 'loss_scikit_test' or mode == 'loss_scikit_train':
@@ -277,7 +291,7 @@ def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning
             #1. Pick an example z.
             example = random.sample(range(len(norm_x[1:])),1)[0]
             #2. Compute the loss Q(z, w) for the current w.
-            Q = loss(w,data, predecs, children,img_nr,example)
+            Q = loss(scaler, w,data, predecs, children,img_nr,example)
             #3. Compute the gradient g = ∇w Q(z, w).
             g = gradient(w,norm_x,pruned_y,example,predecs,children,boxes,alphas,img_nr,feature)
             #4. Apply a slight perturbation w0 = w +δ. For instance, change a single weight
@@ -287,24 +301,63 @@ def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning
             #5. Compute the new loss Q(z, w0
             #) and verify that Q(z, w0) ≈ Q(z, w) + δg
             # Q(z, w + delta*e_i) ≈ ( Q(z, w) + delta * g_i )
-            Q_ = loss(w0,data, predecs, children,img_nr,example)
+            Q_ = loss(scaler, w0,data, predecs, children,img_nr,example)
             #print Q,Q_,g
             #print abs(Q_ - Q+(delta*g)) < 0.001
             #raw_input()
         elif mode == 'levels_train' or mode == 'levels_test':
+            im = mpimg.imread('/home/stahl/Images/'+ (format(img_nr, "06d")) +'.jpg')
+            plt.imshow(im)
             preds = []
             for i,x_ in enumerate(norm_x):
                 preds.append(np.dot(w, x_))
             cpls = []
             truelvls = []
+            used_boxes_ = []
+            # to get prediction min and max for colorbar
+            min_pred = 10
+            max_pred = -5
+            for level in levels:
+                cpl,used_boxes = count_per_level(scaler,w, preds, img_nr, pruned_boxes,levels[level], '')
+                if used_boxes is not None:
+                    used_b_preds = [x[1] for x in used_boxes]
+                    if min(used_b_preds) < min_pred:
+                        min_pred = min(used_b_preds)
+                    if max(used_b_preds) > max_pred:
+                        max_pred = max(used_b_preds)
+            if min(preds) < min_pred:
+                min_pred = min(preds)
+            if max(preds) > max_pred:
+                max_pred = max(preds)
+            print'minmax of intersections: ', min_pred, max_pred
+            cNorm  = colors.Normalize(vmin=min_pred, vmax=max_pred)
+            scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=pl.cm.jet)
+            scalarMap.set_array(range(int(round(min_pred - 0.5)), int(round(max_pred + 0.5))))
+            for pr_box, pr in zip(pruned_boxes,preds):
+                pru_box = pr_box[0]
+                colorVal = scalarMap.to_rgba(pr)
+                ax = plt.gca()
+                ax.add_patch(Rectangle((int(pru_box[0]), int(pru_box[1])), int(pru_box[2] - pru_box[0]), int(pru_box[3] - pru_box[1]), alpha=0.1, facecolor = colorVal, edgecolor = 'black'))
             for level in levels:
                 #tru and truelvls was in order to check if count_per_level method is correct
-                cpl = count_per_level(w, preds, img_nr, pruned_boxes,levels[level], '')
+                cpl,used_boxes = count_per_level(scaler,w, preds, img_nr, pruned_boxes,levels[level], '')
                 #tru = count_per_level(None, pruned_y, img_nr, pruned_boxes,levels[level], 'gt')
                 cpls.append(cpl)
+                #plot image and predictions as color - only for debugging/testing
+                if used_boxes is not None:
+                    for u_box in used_boxes:
+                        pru_box = pr_box[0]
+                        colorVal = scalarMap.to_rgba(u_box[1])
+                        #print u_box[0],u_box[1]
+                        ax = plt.gca()
+                        ax.add_patch(Rectangle((int(pru_box[0]), int(pru_box[1])), int(pru_box[2] - pru_box[0]), int(pru_box[3] - pru_box[1]), alpha=0.1, facecolor = colorVal, edgecolor = 'black'))
                 #truelvls.append(tru)
-            print 'truth: ', pruned_y[0]
-            return cpls, truelvls
+            #print 'truth: ', pruned_y[0]
+            matplotlib.pylab.colorbar(scalarMap, shrink=0.9)
+            plt.draw()
+            plt.savefig('/home/stahl/'+str(img_nr))
+            plt.clf()
+            return cpls, truelvls, used_boxes_,pruned_boxes,preds
             
         
             
@@ -319,17 +372,25 @@ def main():
     losses = {}
     gamma = 0.1
     epochs = 15
-    images = 5
-    subsamples = 40
+    images = 10
+    subsamples = 20
     weights_visualization = {}
     learning_rates = [math.pow(10,-3)]
     learning_rates_ = {}
-    weights_sample = random.sample(range(4096), 10)
-    all_alphas = [0,1]
+    if less_features:
+        weights_sample = random.sample(range(features_used), 2)
+    else:
+        weights_sample = random.sample(range(4096), 10)
+    all_alphas = [1]
     all_alphas_ = [1]
     n_samples = 0.0
-    sum_x = np.zeros(4096)
-    sum_sq_x = np.zeros(4096)
+    if less_features:
+        sum_x = np.zeros(features_used)
+        sum_sq_x = np.zeros(features_used)
+    else:
+        sum_x = np.zeros(4096)
+        sum_sq_x = np.zeros(4096)
+
     plt.figure()
     mean = []
     variance = []
@@ -355,7 +416,10 @@ def main():
             for learning_rate0 in learning_rates:
                 learning_rate = learning_rate0
                 alphas = [alpha2,0,0,alpha3]
-                w = 0.01 * np.random.rand(4096)
+                if less_features:
+                    w = 0.01 * np.random.rand(features_used)
+                else:
+                    w = 0.01 * np.random.rand(4096)                    
                 loss_train = []
                 loss_test = []
                 loss_scikit_train = []
@@ -461,11 +525,13 @@ def main():
                 plt.clf()
                 
                 #plot tree and levels
+                print 'levels: pred, true'
                 for minibatch in shuffled:
-                    cpls,trew = minibatch_(clf,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, 'levels_train')         
+                    cpls,trew,used_boxes_train,pruned_boxes_train,preds_train = minibatch_(clf,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, 'levels_train')         
                     print cpls,trew
-                    cpls,trew = minibatch_(clf,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, 'levels_test')         
+                    cpls,trew,used_boxes_test,pruned_boxes_test,preds_test = minibatch_(clf,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, 'levels_test')         
                     print cpls,trew
+                
                 
                 print len(full_image__train)
                 mse_train_ = ((np.array([z[0] for z in full_image__train]) -np.array( [z_[1] for z_ in full_image__train]))**2).sum() / len(full_image__train)
@@ -475,6 +541,7 @@ def main():
                 plt.ylabel('predictions')
                 plt.plot([z[0] for z in full_image__train], [z_[1] for z_ in full_image__train],'mD', label='full image train')
                 plt.plot([z[0] for z in full_image__test], [z_[1] for z_ in full_image__test],'bo',label='full image test')
+                plt.plot([0,1,2,3,4,5,6,7],[0,1,2,3,4,5,6,7],'r-')
                 plt.xticks(np.arange(0.8,max(max([z[0] for z in full_image__test]),max([z[0] for z in full_image__train])+0.3)))
                 plt.legend( loc='upper left', numpoints = 1 , prop={'size':8})
                 plt.text(0.8,1.0,'MSE train:\n' + str(round(mse_train_,2)) + '\nMSE test:\n' + str(round(mse_test_,2)), verticalalignment='bottom',
@@ -488,6 +555,8 @@ def main():
                 print "model learned"
                 with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'wb') as handle:
                     pickle.dump(w, handle)
+                with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s_scaler.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'wb') as handle:
+                    pickle.dump(scaler, handle)
 
 def create_tree(boxes):
     G = nx.Graph()
@@ -675,7 +744,7 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
                 labels.append(ll)
                 investigate.append([i, 0, ll])
                 #if phase == 'test':
-                #    im = mpim.imread('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/'+ (format(i, "06d")) +'.jpg')
+                #    im = mpim.imread('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/'+ (format(i, "06d")) +'.jpg')/home/stahl/Images
                 #    plt.imshow(im)
             else:
                 features.extend(fs)
@@ -770,15 +839,14 @@ def get_hyper_features(A, B):
         surface_union = surface_A + surface_B - surface_intersection
         return surface_intersection / surface_union, surface_intersection / surface_A, surface_intersection / surface_B
         
-def count_per_level(w,preds,img, boxes, boxes_level, mode):
+def count_per_level(scaler,w,preds,img, boxes, boxes_level, mode):
     #tested
     sums = np.zeros(len(boxes_level))
     if len(boxes_level) == 1:
-        return preds[boxes_level[0]]
+        return preds[boxes_level[0]],None
     level_boxes = []
     for i in boxes_level:
         level_boxes.append(boxes[i][0])
-        
     combinations = list(itertools.combinations(boxes_level, 2)) 
     G = nx.Graph()
     G.add_edges_from(combinations)
@@ -789,8 +857,8 @@ def count_per_level(w,preds,img, boxes, boxes_level, mode):
         I = get_set_intersection(set_)
         if I == []:
             G.remove_edges_from([comb])
-    sums = sums_of_all_cliques(w, G, preds, boxes, sums, img, mode)
-    return iep(sums)
+    sums,used_boxes = sums_of_all_cliques(scaler,w, G, preds, boxes, sums, img, mode)
+    return iep(sums),used_boxes
     
     
 def iep(sums):
@@ -803,9 +871,10 @@ def iep(sums):
     return ret
     
     
-def sums_of_all_cliques(w, G, preds, boxes, sums, img_nr, mode):
+def sums_of_all_cliques(scaler,w, G, preds, boxes, sums, img_nr, mode):
     feat_exist = True #must be false in order to write
     real_b = [b[0] for b in boxes]
+    used_boxes = []
     write_coords = []
     length = 1
     index = {}
@@ -833,6 +902,9 @@ def sums_of_all_cliques(w, G, preds, boxes, sums, img_nr, mode):
                 for s in str_:
                    ff.append(float(s))
                 features.append(ff)
+            if less_features:
+                features = [fts[0:features_used] for fts in features]
+            features = scaler.transform(features)
         else:
             print '/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt doesnt exist'
         assert len(coords) == len(features)
@@ -868,12 +940,14 @@ def sums_of_all_cliques(w, G, preds, boxes, sums, img_nr, mode):
           if I in real_b:
              ind = real_b.index(I)
              sums[len(base)-1] += preds[ind]
+             used_boxes.append([I,np.dot(w,features[ind])])
           else:
              if feat_exist == True:
                 if mode != 'gt':
                     if I in coords and I != []:
                       ind = coords.index(I)
                       sums[len(base)-1] += np.dot(w,features[ind])
+                      used_boxes.append([I,np.dot(w,features[ind])])
                     else:
                         print 'not found', I
                 elif mode == 'gt':
@@ -894,10 +968,10 @@ def sums_of_all_cliques(w, G, preds, boxes, sums, img_nr, mode):
           f_c.seek(0,2)
           f_c.write(str(coor[0])+','+str(coor[1])+','+str(coor[2])+','+str(coor[3]))
           f_c.write('\n')
-    return sums
+    return sums, used_boxes
     
     
-def train_per_level(x,node,img_nr, boxes, children, parent, feat):
+def train_per_level(scaler, x,node,img_nr, boxes, children, parent, feat):
     if len(children) == 1:
         return (-x[node][feat] + x[parent][feat])
     children_boxes = []
@@ -944,6 +1018,10 @@ def train_per_level(x,node,img_nr, boxes, children, parent, feat):
             for s in str_:
                ff.append(float(s))
             features.append(ff)
+        if less_features:
+            features = [fts[0:features_used] for fts in features]
+        features = scaler.transform(features)
+            
     else:
         print '/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt doesnt exist'
     assert len(coords) == len(features)

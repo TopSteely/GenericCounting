@@ -1,4 +1,7 @@
 from sklearn import linear_model
+from networkx.drawing.nx_agraph import graphviz_layout
+import paramiko
+import base64
 import matplotlib
 matplotlib.use('agg')
 import math
@@ -7,6 +10,7 @@ import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import numpy as np
+import pygraphviz
 import itertools
 import pickle
 import networkx as nx
@@ -17,7 +21,7 @@ from collections import deque
 from itertools import chain, islice
 from get_intersection_count import get_intersection_count
 
-def count_per_level(scaler,w,preds,img, boxes, boxes_level, mode):
+def count_per_level(client, scaler,w,preds,img, boxes, boxes_level, mode):
     #tested
     sums = np.zeros(len(boxes_level))
     if len(boxes_level) == 1:
@@ -35,7 +39,7 @@ def count_per_level(scaler,w,preds,img, boxes, boxes_level, mode):
         I = get_set_intersection(set_)
         if I == []:
             G.remove_edges_from([comb])
-    sums,used_boxes = sums_of_all_cliques(scaler,w, G, preds, boxes, sums, img, mode)
+    sums,used_boxes = sums_of_all_cliques(client, scaler,w, G, preds, boxes, sums, img, mode)
     return iep(sums),used_boxes
     
     
@@ -49,7 +53,7 @@ def iep(sums):
     return ret
     
     
-def sums_of_all_cliques(scaler,w, G, preds, boxes, sums, img_nr, mode):
+def sums_of_all_cliques(client,scaler,w, G, preds, boxes, sums, img_nr, mode):
     feat_exist = True #must be false in order to write
     real_b = [b[0] for b in boxes]
     used_boxes = []
@@ -60,33 +64,27 @@ def sums_of_all_cliques(scaler,w, G, preds, boxes, sums, img_nr, mode):
     coords = []
     features = []
     if mode != 'gt':
-        if os.path.isfile('/home/t/Schreibtisch/Thesis/sheep'+ (format(img_nr, "06d")) +'_coords.txt'):
-            f_c = open('/home/t/Schreibtisch/Thesis/sheep'+ (format(img_nr, "06d")) +'_coords.txt', 'r+')
-            for i,line in enumerate(f_c):
-                str_ = line.rstrip('\n').split(',')
-                cc = []
-                for s in str_:
-                   cc.append(float(s))
-                coords.append(cc)
-        else:
-            print '/home/t/Schreibtisch/Thesis/sheep'+ (format(img_nr, "06d")) +'_coords.txt'
-            f_c = open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt', 'w+')
+        f_c = client.open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt','r')
+        for i,line in enumerate(f_c):
+            str_ = line.rstrip('\n').split(',')
+            cc = []
+            for s in str_:
+               cc.append(float(s))
+            coords.append(cc)
+        #f_c = open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt', 'w+')
     
-        if os.path.isfile('/home/t/Schreibtisch/Thesis/sheep'+ (format(img_nr, "06d")) +'_feat.txt'):
-            f = open('/home/t/Schreibtisch/Thesis/sheep'+ (format(img_nr, "06d")) +'_feat.txt', 'r') 
-            feat_exist = True
-            for i,line in enumerate(f):
-                str_ = line.rstrip('\n').split(',')  
-                ff = []
-                for s in str_:
-                   ff.append(float(s))
-                features.append(ff)
-            if less_features:
-                features = [fts[0:features_used] for fts in features]
-            features = scaler.transform(features)
-        else:
-            print '/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt doesnt exist'
-            
+        f = client.open('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt', 'r')
+        feat_exist = True
+        for i,line in enumerate(f):
+            str_ = line.rstrip('\n').split(',')  
+            ff = []
+            for s in str_:
+               ff.append(float(s))
+            features.append(ff)
+        if less_features:
+            features = [fts[0:features_used] for fts in features]
+        features = scaler.transform(features)
+        
         assert len(coords) == len(features)
     if mode == 'gt':
         if os.path.isfile('/home/stahl/GroundTruth/sheep_coords_for_features/'+ (format(img_nr, "06d")) +'.txt'):
@@ -150,8 +148,9 @@ def sums_of_all_cliques(scaler,w, G, preds, boxes, sums, img_nr, mode):
           f_c.write('\n')
     return sums, used_boxes         
 
-def get_seperation():
-    file = open('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/ImageSets/Main/test.txt')
+def get_seperation(client):
+    file = client.open('/home/stahl/Generic counting/IO/test.txt','r')
+    #stdin, stdout, stderr = client.exec_command('cat /home/stahl/Generic counting/IO/test.txt')
     test_imgs = []
     train_imgs = []
     for line in file:
@@ -162,7 +161,7 @@ def get_seperation():
     return test_imgs, train_imgs
     
     
-def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
+def get_data(client, class_, test_imgs, train_imgs, start, end, phase, criteria):
     features = []
     labels = []
     investigate = []
@@ -171,7 +170,7 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
     trained = False
     if class_ != 'all':
         # read images with class from file
-        file = open('/home/t/Schreibtisch/Thesis/ClassImages/'+ class_+'.txt', 'r')
+        file = client.open('/home/stahl/Generic counting/IO/ClassImages/'+ class_+'.txt', 'r')
         for line in file:
             im_nr = int(line)
             class_images.append(int(line))
@@ -186,12 +185,12 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
             training_images = test_imgs
     for i in training_images[start:end]:
         print i
-        fs = get_features(i)
+        fs = get_features(client, i)
         if fs != []:
             trained = True
             if baseline == 1 or baseline == 2:                    
                 features.append(fs)
-                tmp = get_labels(i, criteria)
+                tmp = get_labels(client,i, criteria)
                 ll = int(tmp[0])
                 labels.append(ll)
                 investigate.append([i, 0, ll])
@@ -200,7 +199,7 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
                 #    plt.imshow(im)
             else:
                 features.extend(fs)
-                l = get_labels(i, criteria)
+                l = get_labels(client, i, criteria)
                 labels.extend(l)
                 for ind in range(l.__len__()):
                     investigate.append([i, ind, l[ind]])
@@ -216,13 +215,9 @@ def get_data(class_, test_imgs, train_imgs, start, end, phase, criteria):
     return features, labels, investigate
 
 
-def get_features(i):
+def get_features(client, i):
     features = []
-    if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt'):
-        file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt', 'r')
-    else:
-        print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/SS_Boxes/'+ (format(i, "06d")) +'.txt does not exist '
-        return features
+    file = client.open('/home/stahl/Features_prop_windows/SS_Boxes/'+ (format(i, "06d")) +'.txt', 'r')
     if baseline == 1 or baseline == 2:
         line = file.readline()
         tmp = line.split(',')
@@ -238,13 +233,9 @@ def get_features(i):
     return features
 
 
-def get_labels(i, criteria):
+def get_labels(client, i, criteria):
     labels = []
-    if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+(format(i, "06d")) + '_' + class_ + '_' + criteria + '.txt'):
-        file = open('/home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+(format(i, "06d")) + '_' + class_ + '_' + criteria + '.txt', 'r')
-    else:
-        print 'warning /home/t/Schreibtisch/Thesis/SS_Boxes/Labels/'+(format(i, "06d")) + '_' + class_ + '_' + criteria + '.txt does not exist '
-        return labels
+    file = client.open('/home/stahl/Coords_prop_windows/Labels/'+(format(i, "06d")) + '_' + class_ + '_' + criteria + '.txt', 'r')
     for line in file:
         tmp = line.split()[0]
         labels.append(float(tmp))
@@ -425,6 +416,11 @@ def count_per_level_(boxes, ground_truths, boxes_level):
     
 #@profile   
 def prof():  
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(
+    paramiko.AutoAddPolicy())
+    client.connect('lemming.science.uva.nl', username='stahl', password='lMfbOm;u7X@s8fc')
+    sftp_client = client.open_sftp()
     img = 107
     c = 'partial'
     class_ = 'sheep'
@@ -432,23 +428,21 @@ def prof():
     coords = []
     alphas = [1,0,1,0]
     learning_rate0 = math.pow(10,-3)
-    test_imgs, train_imgs = get_seperation()
-    X_p_test, y_p_test, investigate = get_data(class_, test_imgs, train_imgs, 0, 1, 'training', c)
+    test_imgs, train_imgs = get_seperation(sftp_client)
+    X_p_test, y_p_test, investigate = get_data(sftp_client, class_, test_imgs, train_imgs, 0, 1, 'training', c)
     
-    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+'%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3])):
-        with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+'%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'rb') as handle:
-            w = pickle.load( handle)
-    if os.path.isfile('/home/t/Schreibtisch/Thesis/Models/'+class_+c+'%s_%s_%s_%s_%s_scaler.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3])):
-        with open('/home/t/Schreibtisch/Thesis/Models/'+class_+c+'%s_%s_%s_%s_%s_scaler.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'rb') as handle:
-            scaler = pickle.load( handle)
+    with sftp_client.open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'rb') as handle:
+        w = pickle.load( handle)
+    with sftp_client.open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s_scaler.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'rb') as handle:
+        scaler = pickle.load( handle)
     X_p_test = scaler.transform(X_p_test)
     preds = np.dot(w,np.array(X_p_test).T)
     
     
     img_nr = investigate[0][0]
-    if os.path.isfile('/home/t/Schreibtisch/Thesis/SS_Boxes/'+ (format(img_nr, "06d")) +'.txt'):
-        f = open('/home/t/Schreibtisch/Thesis/SS_Boxes/'+ (format(img_nr, "06d")) +'.txt', 'r')
-    img = mpimg.imread('/home/t/Schreibtisch/Thesis/VOCdevkit1/VOC2007/JPEGImages/'+ (format(img, "06d")) +'.jpg')
+    f = sftp_client.open('/home/stahl/Coords_prop_windows/'+ (format(img_nr, "06d")) +'.txt', 'r')
+    with sftp_client.open('/home/stahl/Images/'+ (format(img, "06d")) +'.jpg') as handle:
+        img = mpimg.imread(handle,format='jpg')
     for line, y in zip(f, investigate):
         tmp = line.split(',')
         coord = []
@@ -524,9 +518,13 @@ def prof():
             levels[level] = [i]
             G.add_edge(i,parent)
     cpls = []
+    print 'levels'
+    print len(levels)
     for level in levels:
-        cpl = count_per_level(scaler,w,preds,img_nr, boxes, levels[level], '')
+        cpl = count_per_level(sftp_client,scaler,w,preds,img_nr, boxes, levels[level], '')
+        print cpl[0]
         cpls.append(cpl[0])
+    print 'levels done'
         
         
     # http://mathworld.wolfram.com/Inclusion-ExclusionPrinciple.html
@@ -540,17 +538,19 @@ def prof():
 #    plt.colorbar(sm,shrink=0.8)
 #    plt.show()
     plt.figure()
-    pos=nx.graphviz_layout(G,prog='dot')
+    pos=graphviz_layout(G,prog='dot')
     sm = plt.cm.ScalarMappable(cmap=cm.RdPu, norm=plt.Normalize(vmin=min(preds), vmax=max(preds)))
     sm.set_array(preds)
     colorsV = [sm.to_rgba(i) for i in preds]
-    offsets,bla = nx.draw_networkx(G, cpls,pos, arrows=False, node_color=colorsV)
-    for of,cpl in zip(offsets,cpls):
+    offsets = nx.draw_networkx(G, cpls,pos, arrows=False, node_color=colorsV)
+    for of,cpl in zip(reversed(offsets),cpls):
+        print of
         plt.text(1800,of,str(round(cpl,2)))
 #    plt.ylim(min(cpls)-0.3, max(cpls)+0.3)
     plt.colorbar(sm)
     plt.show()
     plt.title('Tree with prediction as colored nodes - Image 107')
+    client.close()
     
 baseline = False
 class_ = 'sheep'

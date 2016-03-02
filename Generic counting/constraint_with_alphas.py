@@ -40,13 +40,14 @@ class_ = 'sheep'
 baseline = False
 add_window_size = False
 iterations = 1000
-subsampling = True
+subsampling = False
 c = 'partial'
 normalize = True
 prune = False
 delta = math.pow(10,-3)
 features_used = 5
 less_features = False
+learn_intersections = False
 
 class bcolors:
     HEADER = '\033[95m'
@@ -103,7 +104,7 @@ def loss(features,coords,scaler,w, data, predecs, children,img_nr, only_single):
                 previous_layers[parent] = children_layer
         else:
             children_layer = 0
-        layers += children_layer - parent_pred if children_layer > parent_pred else 0
+        layers += (children_layer - parent_pred) if children_layer > parent_pred else 0
     ret = alphas[0] * ((y_selection - np.dot(w,np.array(x_selection).T)) ** 2).sum() + alphas[1] * np.dot(w,w) + alphas[2] * parent_child + alphas[3] * layers
     return ret
 
@@ -135,7 +136,6 @@ def like_scikit(features,coords,scaler,w,x,y,node,predecs,children,boxes,learnin
     function1 = []
     function2 = []
     for f_ in range(len(w)):
-        print node, f_
         parent_child = 0
         parent_pred = np.dot(w,x[parent])
         child_pred = np.dot(w,x[node])
@@ -146,15 +146,12 @@ def like_scikit(features,coords,scaler,w,x,y,node,predecs,children,boxes,learnin
             children_layer = 0
         else:
             if learn_second_constraint:
-                print function1
                 children_layer, _, function1 = count_per_level(features,coords,scaler,w,preds,img_nr, boxes, children[parent], '',function1)
             #print 'lsk ', f_, children_layer, parent_pred, boxes[node][1], boxes[parent][1], learn_second_constraint
             if children_layer > parent_pred:
-                print function2
-                layers_cons,function2 = train_per_level(features,coords,scaler, x,node,img_nr, boxes, children[parent], parent, f_, function2)
+                layers_cons,function2 = train_per_level_a(features,coords,scaler, x,node,img_nr, boxes, children[parent], parent, f_, function2)
             else:
                 learn_second_constraint = False
-            raw_input()
         w[f_] += (learning_rate * (alphas[0]*(-x_node[f_] * dloss) + alphas[1] * w[f_] + alphas[2] * parent_child + alphas[3] * layers_cons))
     return w
     
@@ -244,6 +241,38 @@ def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning
         # create_tree
         G, levels = create_tree(pruned_boxes)
         
+        coords = []
+        features = []
+        if os.path.isfile('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt'):
+            f = open('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt', 'r') 
+        if os.path.isfile('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt'):
+            f_c = open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt', 'r+')
+        for i,line in enumerate(f_c):
+            str_ = line.rstrip('\n').split(',')
+            cc = []
+            for s in str_:
+               cc.append(float(s))
+            coords.append(cc)
+        for i,line in enumerate(f):
+            str_ = line.rstrip('\n').split(',')  
+            ff = []
+            for s in str_:
+               ff.append(float(s))
+            features.append(ff)
+        if less_features:
+            features = [fts[0:features_used] for fts in features]
+        features = scaler.transform(features)
+                
+        assert len(coords) == len(features)
+        
+        # append x,y of intersections
+        if learn_intersections:
+            for inters,coord in zip(features,coords):
+#                if inters not in pruned_x:
+                pruned_x.append(inters)
+                ol = 0.0
+                ol = get_intersection_count(coord, ground_truths)
+                pruned_y.append(ol)
         #normalize
         norm_x = []
         if normalize:
@@ -269,39 +298,15 @@ def minibatch_(clf,scaler,w, loss__,mse,hinge1,hinge2,full_image,alphas,learning
                 children[node] = children_
             last = node
         if mode == 'train':
-            coords = []
-            features = []
-            if os.path.isfile('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt'):
-                f = open('/home/stahl/Features_prop_windows/Features_upper/sheep'+ (format(img_nr, "06d")) +'.txt', 'r') 
-            if os.path.isfile('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt'):
-                f_c = open('/home/stahl/Features_prop_windows/upper_levels/sheep'+ (format(img_nr, "06d")) +'.txt', 'r+')
-            for i,line in enumerate(f_c):
-                str_ = line.rstrip('\n').split(',')
-                cc = []
-                for s in str_:
-                   cc.append(float(s))
-                coords.append(cc)
-            for i,line in enumerate(f):
-                str_ = line.rstrip('\n').split(',')  
-                ff = []
-                for s in str_:
-                   ff.append(float(s))
-                features.append(ff)
-            if less_features:
-                features = [fts[0:features_used] for fts in features]
-            features = scaler.transform(features)
-                    
-            assert len(coords) == len(features)
     
             nodes = list(G.nodes())
             for node in nodes:
                 print node
                 if node == 0:
                     w = learn_root(w,norm_x[0],pruned_y[0],learning_rate,alphas)
+                    #print 'learn nothing'
                 else:
                     w = like_scikit(features,coords,scaler,w,norm_x,pruned_y,node,predecs,children,pruned_boxes,learning_rate,alphas,img_nr)
-            f.close()
-            f_c.close()
             return w, len(pruned_y)
         elif mode == 'scikit_train':
             clf.partial_fit(norm_x,pruned_y)
@@ -407,10 +412,10 @@ def main():
     losses = {}
     gamma = 0.1
     epochs = 1
-    images = 1
+    images = 2
     subsamples = 20
     weights_visualization = {}
-    learning_rates = [math.pow(10,-3)]
+    learning_rates = [math.pow(10,-4)]
     learning_rates_ = {}
     if less_features:
         weights_sample = random.sample(range(features_used), 2)
@@ -450,7 +455,7 @@ def main():
         for alpha3 in all_alphas_:
             for learning_rate0 in learning_rates:
                 learning_rate = learning_rate0
-                alphas = [alpha2,0,0,alpha3]
+                alphas = [0,1,0,0]
                 if less_features:
                     w = 0.01 * np.random.rand(features_used)
                 else:
@@ -521,6 +526,8 @@ def main():
                     full_image_train.append(((np.array([z[0] for z in full_image__train]) - np.array( [z_[1] for z_ in full_image__train]))**2).sum() / len(full_image__train))
                     full_image_test.append(((np.array([z[0] for z in full_image__test]) -np.array( [z_[1] for z_ in full_image__test]))**2).sum() / len(full_image__test))
                     print sum(loss__train)/len(loss__train), sum(loss__test)/len(loss__test), sum(mse__train)/len(mse__train), sum(mse__test)/len(mse__test)
+                    print sum(hinge2__train)/len(hinge2__train)
+                    print sum(hinge2__test)/len(hinge2__test)
                     # save sample weights for plotting
                     ww_ = []
                     for w_ in weights_sample:
@@ -559,41 +566,50 @@ def main():
                 plt.plot(full_image_test,'-m|', label='full image test set')
                 plt.title('%s,%s,%s,%s,%s'%(learning_rate0,alphas[0], alphas[1],alphas[2],alphas[3]))
                 plt.legend( loc='upper left', numpoints = 1, prop={'size':8})
-                plt.savefig('/home/stahl/all_images%s_%s_%s_%s_%s.png'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]))
+                plt.savefig('/home/stahl/all_images%s_%s_%s_%s_%s_%s_%s.png'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3],learn_intersections,subsampling))
                 plt.clf()
+                
+                max_level_score_train = []
+                max_level_score_test = []
                 
                 #plot tree and levels
                 print 'levels: pred, true'
                 for minibatch in shuffled:
                     cpls,trew,used_boxes_train,pruned_boxes_train,preds_train = minibatch_(clf,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, 'levels_train')         
                     print cpls,trew
+                    max_level_score_train.append(max(cpls))
                     cpls,trew,used_boxes_test,pruned_boxes_test,preds_test = minibatch_(clf,scaler,w, [],[],[],[],[],alphas,learning_rate,test_imgs, train_imgs,minibatch,subsamples,sum_x,n_samples,sum_sq_x,mean,variance, 'levels_test')         
                     print cpls,trew
+                    max_level_score_test.append(max(cpls))
                 
                 
                 print len(full_image__train)
                 mse_train_ = ((np.array([z[0] for z in full_image__train]) -np.array( [z_[1] for z_ in full_image__train]))**2).sum() / len(full_image__train)
                 mse_test_ = ((np.array([z[0] for z in full_image__test]) - np.array([z_[1] for z_ in full_image__test]))**2).sum() / len(full_image__test)
+                mse_mxlvl_train = ((np.array([z[0] for z in full_image__train]) -np.array(max_level_score_train ))**2).sum() / len(full_image__train)
+                mse_mxlvl_test = ((np.array([z[0] for z in full_image__test]) - np.array(max_level_score_test))**2).sum() / len(full_image__test)
                 
                 plt.xlabel('ground truth')
                 plt.ylabel('predictions')
                 plt.plot([z[0] for z in full_image__train], [z_[1] for z_ in full_image__train],'mD', label='full image train')
                 plt.plot([z[0] for z in full_image__test], [z_[1] for z_ in full_image__test],'bo',label='full image test')
+                plt.plot([z[0] for z in full_image__train], max_level_score_train,'mp', label='max level train')
+                plt.plot([z[0] for z in full_image__test], max_level_score_test,'bH',label='max level test')
                 plt.plot([0,1,2,3,4,5,6,7],[0,1,2,3,4,5,6,7],'r-')
                 plt.xticks(np.arange(0.8,max(max([z[0] for z in full_image__test]),max([z[0] for z in full_image__train])+0.3)))
                 plt.legend( loc='upper left', numpoints = 1 , prop={'size':8})
-                plt.text(0.8,1.0,'MSE train:\n' + str(round(mse_train_,2)) + '\nMSE test:\n' + str(round(mse_test_,2)), verticalalignment='bottom',
+                plt.text(0.8,1.0,'MSE train:\n' + str(round(mse_train_,2)) + '\nMSE test:\n' + str(round(mse_test_,2))+'MSE mxlvl train:\n' + str(round(mse_mxlvl_train,2)) + '\nMSE mxlvl test:\n' + str(round(mse_mxlvl_test,2)), verticalalignment='bottom',
                              horizontalalignment='left',
                              fontsize=8,
                              bbox={'facecolor':'white', 'alpha':0.6, 'pad':10})
                 plt.title('Predictions full image,%s,%s,%s,%s,%s'%(learning_rate0,alphas[0], alphas[1],alphas[2],alphas[3]))
-                plt.savefig('/home/stahl/full_image_%s_%s_%s_%s_%s.png'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]))
+                plt.savefig('/home/stahl/full_image_%s_%s_%s_%s_%s_%s_%s.png'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3],learn_intersections,subsampling))
                 plt.clf()
         
-                print "model learned"
-                with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'wb') as handle:
+                print "model learned with learning rate: %s, alphas: %s, subsampling: %s, learn_intersections: %s"%(learning_rate0,alphas,subsampling,learn_intersections)
+                with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3],learn_intersections,subsampling), 'wb') as handle:
                     pickle.dump(w, handle)
-                with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s_scaler.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'wb') as handle:
+                with open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s_%s_%s_scaler.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3],learn_intersections,subsampling), 'wb') as handle:
                     pickle.dump(scaler, handle)
 
 def create_tree(boxes):
@@ -881,19 +897,18 @@ def count_per_level(features,coords,scaler,w,preds,img, boxes, boxes_level, mode
     #tested
     sums = np.zeros(len(boxes_level))
     if len(boxes_level) == 1:
-        return preds[boxes_level[0]],None
+        return preds[boxes_level[0]],None,[]
     if function != []:
         count_per_level = 0
         for fun in function:
-            print fun
-            if 'p' in fun:
+            if 'p' in fun[1]:
                 if '+' in fun[0]:
                     count_per_level += preds[fun[2]]
                 elif '-' in fun[0]:
                     count_per_level -= preds[fun[2]]
                 else:
                     print 'wrong symbol 0', fun[0]
-            if 'f' in fun[1]:
+            elif 'f' in fun[1]:
                 if '+' in fun[0]:
                     count_per_level += np.dot(w,features[fun[2]])
                 elif '-' in fun[0]:
@@ -1006,7 +1021,6 @@ def sums_of_all_cliques(features, coords, scaler,w, G, preds, boxes, sums, img_n
             queue.append((chain(base, [u]),
                           filter(nbrs[u].__contains__,
                                  islice(cnbrs, i + 1, None))))
-    print used_boxes
                                  
     return sums, used_boxes, function
     
@@ -1090,6 +1104,104 @@ def sums_of_all_cliques(features, coords, scaler,w, G, preds, boxes, sums, img_n
 #          f_c.write(str(coor[0])+','+str(coor[1])+','+str(coor[2])+','+str(coor[3]))
 #          f_c.write('\n')
 #    return (- count_per_level + x[parent][feat])
+    
+    
+def train_per_level_a(features,coords,scaler, x,node,img_nr, boxes, children, parent, feat, function):
+    if len(children) == 1:
+        return (-x[node][feat] + x[parent][feat]), []
+    count_per_level = 0
+    if function != []:
+        for fun in function:
+            if 'p' in fun[1]:
+                if '+' in fun[0]:
+                    count_per_level += x[fun[2]][feat]
+                elif '-' in fun[0]:
+                    count_per_level -= x[fun[2]][feat]
+                else:
+                    print 'wrong symbol', fun[0]
+            elif 'f' in fun[1]:
+                if '+' in fun[0]:
+                    count_per_level += features[fun[2]][feat]
+                elif '-' in fun[0]:
+                    count_per_level -= features[fun[2]][feat]
+                else:
+                    print 'wrong symbol 0', fun[0]
+            else:
+                print 'wrong symbol 1', fun[1]
+        return (- count_per_level + x[parent][feat]), function
+    else:
+        children_boxes = []
+        for i in children:
+            children_boxes.append(boxes[i][0])
+            
+        # create graph G from combinations possible        
+        combinations = list(itertools.combinations(children, 2)) 
+        G = nx.Graph()
+        G.add_edges_from(combinations)
+        for comb in combinations:
+            set_ = []
+            for c in comb:
+                set_.append(boxes[c][0])
+            I = get_set_intersection(set_)
+            if I == []:
+                G.remove_edges_from([comb])
+        
+        feat_exist = True #must be false in order to write
+        real_b = [b[0] for b in boxes]
+        write_coords = []
+        length = 1
+        index = {}
+        nbrs = {}
+    
+        for u in G:
+            index[u] = len(index)
+            # Neighbors of u that appear after u in the iteration order of G.
+            nbrs[u] = {v for v in G[u] if v not in index}
+    
+        queue = deque(([u], sorted(nbrs[u], key=index.__getitem__)) for u in G)
+        # Loop invariants:
+        # 1. len(base) is nondecreasing.
+        # 2. (base + cnbrs) is sorted with respect to the iteration order of G.
+        # 3. cnbrs is a set of common neighbors of nodes in base.
+        while queue:
+            base, cnbrs = map(list, queue.popleft())
+            if len(base) > length:
+                length = len(base)
+            I = [0,0,1000,1000]
+            for c in base:
+                if I != []:
+                   I = get_intersection(boxes[c][0], I)
+            if I != []:
+              if I in real_b:
+                 ind = real_b.index(I)
+                 if len(base)%2==1:
+                     count_per_level += x[ind][feat]
+                     function.append(['+','p',ind])
+                 else:
+                     count_per_level -= x[ind][feat]
+                     function.append(['-','p',ind])
+              else:
+                 if feat_exist == True:
+                    if I in coords and I != []:
+                      ind = coords.index(I)
+                      if len(base)%2==1:
+                         count_per_level += features[ind][feat]
+                         function.append(['+','f',ind])
+                      else:
+                         count_per_level -= features[ind][feat]
+                         function.append(['-','f',ind])
+                    else:
+                        print 'not found', I
+                       
+                 else:
+                    if I not in coords and I not in write_coords:
+                         write_coords.append(I)
+            for i, u in enumerate(cnbrs):
+                # Use generators to reduce memory consumption.
+                queue.append((chain(base, [u]),
+                              filter(nbrs[u].__contains__,
+                                     islice(cnbrs, i + 1, None))))
+        return (- count_per_level + x[parent][feat]), function
 
     
 if __name__ == "__main__":

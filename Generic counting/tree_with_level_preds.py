@@ -421,15 +421,15 @@ def prof():
     paramiko.AutoAddPolicy())
     client.connect('lemming.science.uva.nl', username='stahl', password='lMfbOm;u7X@s8fc')
     sftp_client = client.open_sftp()
-    img = 107
+    img = 176
     c = 'partial'
     class_ = 'sheep'
     boxes = []
     coords = []
-    alphas = [1,0,1,0]
+    alphas = [1,0,1,1]
     learning_rate0 = math.pow(10,-3)
     test_imgs, train_imgs = get_seperation(sftp_client)
-    X_p_test, y_p_test, investigate = get_data(sftp_client, class_, test_imgs, train_imgs, 0, 1, 'training', c)
+    X_p_test, y_p_test, investigate = get_data(sftp_client, class_, test_imgs, train_imgs, 2, 3, 'test', c)
     
     with sftp_client.open('/home/stahl/Models/'+class_+c+'%s_%s_%s_%s_%s.pickle'%(learning_rate0, alphas[0],alphas[1],alphas[2],alphas[3]), 'rb') as handle:
         w = pickle.load( handle)
@@ -453,6 +453,9 @@ def prof():
     boxes, preds = sort_boxes(boxes, preds, 0,500)
     
     sums = np.zeros(len(boxes))
+    
+    preds = preds[0:20]
+    boxes = boxes[0:20]
     
     # top-down
     G = nx.Graph()
@@ -542,14 +545,20 @@ def prof():
     sm = plt.cm.ScalarMappable(cmap=cm.RdPu, norm=plt.Normalize(vmin=min(preds), vmax=max(preds)))
     sm.set_array(preds)
     colorsV = [sm.to_rgba(i) for i in preds]
-    offsets = nx.draw_networkx(G, cpls,pos, arrows=False, node_color=colorsV)
-    for of,cpl in zip(reversed(offsets),cpls):
+    nx.draw_networkx(G,pos, arrows=False, node_color=colorsV)
+    offsets = []
+    for n in pos:
+        offsets.append(pos[n][1])
+    offsets.sort()
+    a = np.unique(np.array(offsets))
+    xl = plt.xlim()[1] - 50
+    for of,cpl in zip(reversed(a),cpls):
         print of
-        plt.text(1800,of,str(round(cpl,2)))
+        plt.text(xl,of,str(round(cpl,2)))
 #    plt.ylim(min(cpls)-0.3, max(cpls)+0.3)
-    plt.colorbar(sm)
+    plt.colorbar(sm,shrink=0.8)
     plt.show()
-    plt.title('Tree with prediction as colored nodes - Image 107')
+    plt.title('Tree with prediction as colored nodes - Image %s'%str(img_nr))
     client.close()
     
 baseline = False

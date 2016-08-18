@@ -613,25 +613,26 @@ def main():
     ax[1, 0].set_title('False Positives')
     
     
-    #fig.set_xlabel('Iterations')
-    #fig.set_ylabel('Scores')
     fig.legend((svc1,svc2,lin1,lin2,sgd1,sgd2),('SVC','SVC_t','Lin','Lin_t','SGD','SGD_t'), loc='upper right', numpoints = 1 , prop={'size':5})
     fig.suptitle('%s'%(class_))
     plt.savefig('/home/tstahl/classifiers/%s_classifier_hybrid.png'%(class_))
     plt.clf()
-    #exit()
+    
     # find best classifier:
     correct = np.array(true_n_t) + np.array(true_p_t)
     maximum = np.argmax(correct)
     print 'SGD: ', np.array(true_n) + np.array(true_p), maximum
     print 'SVMs: ', true_posLinearSVC + true_negLinearSVC, true_pos_SVC + true_neg_SVC
-    if correct[maximum] >= true_pos_tLinearSVC + true_neg_tLinearSVC  and correct[maximum] >= true_pos_t_SVC + true_neg_t_SVC:
-        clf = clfs[maximum]
-    else:
-        if true_pos_tLinearSVC + true_neg_tLinearSVC > true_pos_t_SVC + true_neg_t_SVC:
-            clf = clf2
-        else:
-            clf = clf1
+    
+    # classifier picked always predicts zeros (i think it's SVC)
+    clf = clfs[maximum]
+#    if correct[maximum] >= true_pos_tLinearSVC + true_neg_tLinearSVC  and correct[maximum] >= true_pos_t_SVC + true_neg_t_SVC:
+#        clf = clfs[maximum]
+#    else:
+#        if true_pos_tLinearSVC + true_neg_tLinearSVC > true_pos_t_SVC + true_neg_t_SVC:
+#            clf = clf2
+#        else:
+#            clf = clf1
     for epochs in np.arange(1,5):
         for levels_num in np.arange(1,6):
             global prune_tree_levels
